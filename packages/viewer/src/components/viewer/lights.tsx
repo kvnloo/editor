@@ -10,6 +10,7 @@ import type {
 import * as THREE from 'three/webgpu'
 import { getKeyLightDirectionOverride } from '../../lib/key-light-override'
 import { SHADOW_ONLY_LAYER } from '../../lib/layers'
+import { resolveSolarKeyLight } from '../../lib/solar-study'
 import { registerSkyLights } from '../../lib/underground-ambiance'
 import useViewer, { groundVeiled } from '../../store/use-viewer'
 import { useSceneAtmosphere } from './scene-atmosphere'
@@ -100,6 +101,8 @@ function UndergroundFill({ lightRef }: { lightRef: RefObject<DirectionalLight | 
 export function Lights() {
   const theme = useViewer((state) => state.sceneAppearance)
   const shadows = useViewer((state) => state.shadows)
+  const solarStudy = useViewer((state) => state.solarStudy)
+  const solarLight = useMemo(() => resolveSolarKeyLight(solarStudy), [solarStudy])
   const veiled = useViewer(groundVeiled)
   // The eye's fill is mounted once, and stays: adding or taking away a light changes every lit
   // material's shader (a runtime compile that lagged the switch to a basement), so it is there
@@ -171,6 +174,9 @@ export function Lights() {
     const dt = Math.min(delta, 0.1) * 4
     const sourceShadow = atmosphere ? undefined : theme.lights[0]?.shadow
     const sourceCamera = sourceShadow?.camera
+    const directionOverride = getKeyLightDirectionOverride()
+    const studyLight = directionOverride ? null : solarLight
+    const castsShadow = atmosphere ? true : Boolean(theme.lights[0]?.castShadow)
 
     // Atmosphere directions are stable mutable vectors. Keep both light
     // resources mounted and move them imperatively so time/angle changes never
@@ -227,7 +233,6 @@ export function Lights() {
 
       const light = lightRefs.current[0]
       const themeKey = theme.lights[0]
-      const castsShadow = atmosphere ? true : Boolean(themeKey?.castShadow)
       if (light && castsShadow) {
         const focus = shadowFocus.current
         const size =
@@ -237,9 +242,10 @@ export function Lights() {
         const near = SHADOW_BACKOFF
         // Receivers can lie beyond the caster's bounds, especially under a low sun.
         const far = distance + shadowRadius.current * SHADOW_MARGIN_SCALE + SHADOW_MARGIN
-        const directionOverride = getKeyLightDirectionOverride()
         if (directionOverride) {
           shadowDir.current.set(...directionOverride)
+        } else if (studyLight) {
+          shadowDir.current.set(...studyLight.direction)
         } else if (atmosphere) {
           shadowDir.current.copy(atmosphere.sunDirection)
         } else if (themeKey) {
@@ -259,7 +265,7 @@ export function Lights() {
           light.position.copy(focus).add(shadowDir.current)
           light.target.position.copy(focus)
           light.target.updateMatrixWorld()
-        } else if (directionOverride && themeKey) {
+        } else if ((directionOverride || studyLight) && themeKey) {
           const [x, y, z] = themeKey.position
           const [tx, ty, tz] = themeKey.target ?? [0, 0, 0]
           shadowDir.current.normalize().multiplyScalar(Math.hypot(x - tx, y - ty, z - tz) || 1)
@@ -301,9 +307,24 @@ export function Lights() {
       }
     }
 
+    // Non-shadow keys have no building-fit pass; aim them directly at the site sun.
+    if (studyLight && (!shadows || !castsShadow)) {
+      const key = lightRefs.current[0]
+      if (key) {
+        const config = theme.lights[0]
+        const [tx, ty, tz] = config?.target ?? [0, 0, 0]
+        const [x, y, z] = config?.position ?? [0, 100, 0]
+        const distance = Math.hypot(x - tx, y - ty, z - tz) || 100
+        key.target.position.set(tx, ty, tz)
+        key.position.set(...studyLight.direction).multiplyScalar(distance).add(key.target.position)
+        key.target.updateMatrixWorld()
+      }
+    }
+
     for (const index of lightSlots) {
       const light = lightRefs.current[index]
       if (!light) continue
+      if (index === 0) light.visible = studyLight?.visible ?? true
       const config = theme.lights[index]
       const intensity = atmosphere
         ? index === 0
