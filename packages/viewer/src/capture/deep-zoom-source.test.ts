@@ -56,16 +56,24 @@ describe('DeepZoom source', () => {
   })
 
   test('rejects missing Size and required attributes with clear errors', () => {
-    expect(() => parseDeepZoomDescriptor('<Image TileSize="512" Overlap="1" Format="webp" />'))
-      .toThrow('DeepZoom descriptor missing Size element')
+    expect(() =>
+      parseDeepZoomDescriptor('<Image TileSize="512" Overlap="1" Format="webp" />'),
+    ).toThrow('DeepZoom descriptor missing Size element')
     expect(() =>
       parseDeepZoomDescriptor(
         '<Image TileSize="512" Overlap="1" Format="webp"><Size Height="50" /></Image>',
       ),
     ).toThrow('DeepZoom descriptor missing Width attribute')
     expect(() =>
-      parseDeepZoomDescriptor('<Image Overlap="1" Format="webp"><Size Width="1" Height="1" /></Image>'),
+      parseDeepZoomDescriptor(
+        '<Image Overlap="1" Format="webp"><Size Width="1" Height="1" /></Image>',
+      ),
     ).toThrow('DeepZoom descriptor missing TileSize attribute')
+    expect(() =>
+      parseDeepZoomDescriptor(
+        '<Image TileSize="512" Overlap="1"><Size Width="1" Height="1" /></Image>',
+      ),
+    ).toThrow('DeepZoom descriptor missing Format attribute')
   })
 
   test('rejects invalid dimensions and overlap', () => {
