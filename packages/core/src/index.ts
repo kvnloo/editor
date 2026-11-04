@@ -659,6 +659,7 @@ export {
   slotPaintMaterial,
 } from './lib/slots'
 export { createSnapEaser, prefersReducedMotion } from './lib/snap-ease'
+export { solarPosition, type SolarPosition, sunDirectionInPlan } from './lib/solar-position'
 export {
   createRoomTopologyIndex,
   detectSpacesForLevel,
