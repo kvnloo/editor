@@ -1,8 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import {
-  streamDeepZoomZip,
-  type DeepZoomZipTile,
-} from '@pascal-app/editor/deep-zoom-zip'
+import { streamDeepZoomZip, type DeepZoomZipTile } from '@pascal-app/editor/deep-zoom-zip'
 import { deepZoomDescriptor } from '@pascal-app/viewer/capture'
 import { strFromU8, unzipSync } from 'fflate'
 
@@ -34,7 +31,7 @@ function concatenate(chunks: Uint8Array[]): Uint8Array {
 }
 
 describe('streamDeepZoomZip', () => {
-  test('streams a two-level pyramid in arrival order with exact descriptor and tile bytes', async () => {
+  test('streams a two-level pyramid with exact entries and bytes', async () => {
     const chunks: Uint8Array[] = []
     let emittedBytes = 0
 
@@ -66,8 +63,7 @@ describe('streamDeepZoomZip', () => {
     ])
     expect(strFromU8(entries['scan.dzi']!)).toBe(deepZoomDescriptor(descriptorOptions))
     for (const tile of pyramid) {
-      const path =
-        'scan_files/' + tile.level + '/' + tile.col + '_' + tile.row + '.webp'
+      const path = 'scan_files/' + tile.level + '/' + tile.col + '_' + tile.row + '.webp'
       expect(entries[path]).toEqual(tile.bytes)
     }
   })
