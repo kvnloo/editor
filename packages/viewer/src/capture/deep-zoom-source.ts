@@ -11,8 +11,10 @@ function elementAttributes(xml: string, element: string): Map<string, string> {
   if (!tag) throw new Error(`DeepZoom descriptor missing ${element} element`)
 
   const attributes = new Map<string, string>()
-  for (const match of tag.matchAll(/([A-Za-z_:][A-Za-z0-9_.:-]*)\\s*=\\s*(?:"([^"]*)"|'([^']*)')/g)) {
-    attributes.set(match[1], match[2] ?? match[3] ?? '')
+  const attributePattern = /([A-Za-z_:][A-Za-z0-9_.:-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g
+  for (const match of tag.matchAll(attributePattern)) {
+    const name = match[1]
+    if (name) attributes.set(name, match[2] ?? match[3] ?? '')
   }
   return attributes
 }
@@ -23,10 +25,14 @@ function requiredAttribute(attributes: Map<string, string>, name: string): strin
   return value.trim()
 }
 
-function integerAttribute(attributes: Map<string, string>, name: string, minimum: number): number {
+function integerAttribute(
+  attributes: Map<string, string>,
+  name: string,
+  minimum: number,
+): number {
   const raw = requiredAttribute(attributes, name)
   const value = Number(raw)
-  if (!/^\\d+$/.test(raw) || !Number.isSafeInteger(value) || value < minimum) {
+  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value < minimum) {
     throw new Error(`DeepZoom descriptor invalid ${name}: ${raw}`)
   }
   return value
@@ -51,7 +57,7 @@ export function parseDeepZoomDescriptor(xml: string): ParsedDeepZoomDescriptor {
 }
 
 export function deepZoomTilesUrl(dziUrl: string): string {
-  const match = /^(.+)\\.dzi(\\?[^#]*)?(?:#.*)?$/i.exec(dziUrl)
+  const match = /^(.+)\.dzi(\?[^#]*)?(?:#.*)?$/i.exec(dziUrl)
   if (!match) throw new Error('DeepZoom descriptor URL must end with .dzi')
   return `${match[1]}_files/${match[2] ?? ''}`
 }
