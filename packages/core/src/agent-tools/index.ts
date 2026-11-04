@@ -28,6 +28,7 @@ import { duplicateNodeTool, moveNodeTool } from './move-duplicate'
 import { deleteNodeTool, getNodeTool } from './nodes'
 import { paintTool } from './paint'
 import { placeInRoomTool } from './place-in-room'
+import { planGigapixelCaptureTool } from './plan-gigapixel-capture'
 import { placeItemsTool } from './place-items'
 import { createRoofTool, moveRoofsToRoofLevelTool } from './roofs'
 import { ROOM_TOOL_CONTRACTS } from './room-structure'
@@ -62,6 +63,7 @@ export { NodeId } from './node-id'
 export * from './nodes'
 export * from './notation-inventory'
 export * from './paint'
+export * from './plan-gigapixel-capture'
 export * from './place-items'
 export * from './project-files'
 export * from './refusal'
@@ -89,6 +91,7 @@ export const AGENT_TOOL_CONTRACTS = [
   measureStairTool,
   fitStairTool,
   viewSceneTool,
+  planGigapixelCaptureTool,
   addDoorTool,
   addWindowTool,
   listLevelsTool,

@@ -45,3 +45,12 @@ export {
   PushCaptureSource,
   type PushCaptureSourceOptions,
 } from './source'
+
+export {
+  deepZoomDescriptor,
+  deepZoomLevelSize,
+  deepZoomMaxLevel,
+  deepZoomTiles,
+  type DeepZoomDescriptorOptions,
+  type DeepZoomTile,
+} from './deep-zoom'

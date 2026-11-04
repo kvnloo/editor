@@ -878,6 +878,19 @@
       }
     },
     {
+      "name": "plan_gigapixel_capture",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": false
+      },
+      "justifications": {
+        "readOnlyHint": "Calculates DeepZoom pyramid dimensions and tile counts without accessing or changing a scene.",
+        "destructiveHint": "Does not write scene nodes, artifacts, or output files.",
+        "openWorldHint": "Operates only on numerical inputs with local shared core math; no external service."
+      }
+    },
+    {
       "name": "rebase_floor_reference",
       "annotations": {
         "readOnlyHint": false,

@@ -55,6 +55,7 @@ import {
   moveRoofsToRoofLevelTool,
   paintTool,
   placeBuildingTool,
+  planGigapixelCaptureTool,
   placeDesignTool,
   placeInRoomTool,
   placeItemsTool,
@@ -162,6 +163,34 @@ const levelRoleOutput = {
 }
 
 const SHARED_TOOLS: SharedTool[] = [
+  {
+    contract: planGigapixelCaptureTool,
+    operation: AGENT_OPERATIONS.plan_gigapixel_capture,
+    annotations: READ_ONLY_TOOL_ANNOTATIONS,
+    outputSchema: {
+      width: z.int().positive(),
+      height: z.int().positive(),
+      tileSize: z.int().positive(),
+      overlap: z.int().nonnegative(),
+      format: z.enum(['webp', 'png', 'jpeg']),
+      maxLevel: z.int().nonnegative(),
+      levelCount: z.int().positive(),
+      levels: z.array(
+        z.object({
+          level: z.int().nonnegative(),
+          width: z.int().positive(),
+          height: z.int().positive(),
+          columns: z.int().positive(),
+          rows: z.int().positive(),
+          tileCount: z.int().positive(),
+        }),
+      ),
+      totalTiles: z.int().positive(),
+      estimatedBytes: z.int().positive(),
+      estimateBasis: z.literal('raw_rgba_tiles_including_overlap'),
+      dzi: z.string(),
+    },
+  },
   {
     contract: validateDesignTool,
     operation: AGENT_OPERATIONS.validate_design,
