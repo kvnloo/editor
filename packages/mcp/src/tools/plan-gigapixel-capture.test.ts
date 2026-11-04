@@ -147,9 +147,12 @@ describe('plan_gigapixel_capture through a real MCP client', () => {
         expect(response.isError).toBe(true)
         expect(data.code).toBe(code)
       }
-      const invalid = await plan(client, { width: 0, height: 512 })
-      expect(invalid.response.isError).toBe(true)
-      expect(JSON.stringify(invalid.response)).toContain('invalid_input')
+      const invalid = await client.callTool({
+        name: 'plan_gigapixel_capture',
+        arguments: { width: 0, height: 512 },
+      })
+      expect(invalid.isError).toBe(true)
+      expect(JSON.stringify(invalid)).toContain('invalid_input')
     })
   })
 })

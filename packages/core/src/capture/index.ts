@@ -45,7 +45,6 @@ export {
   PushCaptureSource,
   type PushCaptureSourceOptions,
 } from './source'
-
 export {
   deepZoomDescriptor,
   deepZoomLevelSize,
