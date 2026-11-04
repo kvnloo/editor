@@ -9,6 +9,7 @@ export {
   type CaptureStreamRendererProps,
 } from './capture-runtime'
 export { resolveCaptureFrameMatrix } from './frame'
+export { halveRgba } from './halve-rgba'
 export {
   isCaptureLayerVisible,
   isCaptureSessionVisible,
