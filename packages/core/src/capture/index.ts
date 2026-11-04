@@ -45,3 +45,4 @@ export {
   PushCaptureSource,
   type PushCaptureSourceOptions,
 } from './source'
+export { type SourceFamilyVerdict, verifySourceFamily } from './source-family'
