@@ -2,6 +2,7 @@ import { addObjectTool, getSourceTool } from './add-object'
 import { searchAssetsTool, viewAssetsTool } from './assets'
 import { authorSceneTool } from './author-scene'
 import { runBatchTool } from './batch'
+import { getCaptureEvidenceTool } from './capture-evidence'
 import { setCheckpointTool } from './checkpoints'
 import { clearSceneTool } from './clear-scene'
 import { editCollectionTool, listCollectionsTool } from './collections'
@@ -44,6 +45,7 @@ export * from './achieved'
 export * from './add-object'
 export * from './assets'
 export * from './author-scene'
+export * from './capture-evidence'
 export * from './clear-scene'
 export * from './collections'
 export * from './columns'
@@ -93,6 +95,7 @@ export const AGENT_TOOL_CONTRACTS = [
   addWindowTool,
   listLevelsTool,
   getNodeTool,
+  getCaptureEvidenceTool,
   getLevelSummaryTool,
   getWallsTool,
   getZonesTool,

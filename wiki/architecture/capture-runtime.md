@@ -46,6 +46,15 @@ available to hosts, which can add a renderer keyed by role or kind without chang
 schema. A splat adapter should remain a separate composited renderer while still consuming the same
 source and visibility contract.
 
+## Read-only agent evidence
+
+The MCP `get_capture_evidence` tool reads a scan node's `captureSession` through the existing
+`CaptureSource.describe()` interface and checks artifact availability and declared SHA-256 byte
+digests. Unresolved artifacts, inline-only streams, failed fetches, and absent checksums are
+reported as unknown; mismatched bytes are failures. A matching digest is only byte integrity,
+not producer authentication: provenance and the overall verdict remain unknown unless a check
+fails. No artifact inventory is stored in the scene graph.
+
 ## Compatibility
 
 The protocol normalizes Community's v1 RoomPlan/device-motion manifest, so existing captures remain

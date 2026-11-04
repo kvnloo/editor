@@ -12,6 +12,7 @@ import {
   recordMade,
   type SceneNodes,
 } from '@pascal-app/core/agent-operations'
+import type { CaptureSourceResolver } from '@pascal-app/core/capture'
 import { untracked } from '@pascal-app/core/runtime'
 import type { SceneBridge } from './bridge/scene-bridge'
 import { createSceneOperations, type SceneOperations } from './operations'
@@ -68,6 +69,10 @@ export type CreatePascalMcpServerOptions = {
   readFile?: ProjectFileReader
   /** Asks an editor open on the project for a picture (`view_scene`); without it, refused. */
   sceneViews?: SceneViewHost
+  /** Resolves a scan node's capture session with the host's access policy. */
+  captureSourceResolver?: CaptureSourceResolver
+  /** Fetches capture artifacts with the host's access policy; defaults to fetch. */
+  captureArtifactFetch?: typeof globalThis.fetch
   /** Reads catalog items' pictures and surfaces before view_assets and paint. */
   assetViews?: PlanReadingHosts['assetViews']
   /** Lines the host adds to what a client reads at connect (the person's own settings). */
@@ -96,6 +101,8 @@ export function createPascalMcpServer(opts: CreatePascalMcpServerOptions): McpSe
     readFile: opts.readFile,
     sceneViews: opts.sceneViews,
     assetViews: opts.assetViews,
+    captureSourceResolver: opts.captureSourceResolver,
+    captureArtifactFetch: opts.captureArtifactFetch,
   })
   registerVisionTools(server, operations)
   if (opts.services) registerHostedServiceTools(server, opts.services)

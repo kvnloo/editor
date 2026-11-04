@@ -17,6 +17,7 @@ import { registerClearScene } from './clear-scene'
 import { registerConstructionTools } from './construction-tools'
 import { registerExportGlb } from './export-glb'
 import { registerExportJson } from './export-json'
+import { type CaptureEvidenceHosts, registerGetCaptureEvidence } from './get-capture-evidence'
 import { registerGetScene } from './get-scene'
 import { registerMeasure } from './measure'
 import { registerPhotoToSceneTool } from './photo-to-scene'
@@ -39,7 +40,7 @@ import { registerViewScene, type SceneViewHost } from './view-scene'
  * when persistence operations are available.
  */
 /** What the host lends the tools: its item library, script compiles, a view. */
-export type ToolHosts = PlanReadingHosts & {
+export type ToolHosts = PlanReadingHosts & CaptureEvidenceHosts & {
   catalog?: AssetCatalog
   geometryScripts?: GeometryScriptHost
   /** Makes add_object's pieces from words; without it a piece is refused `pieces_unavailable`. */
@@ -52,9 +53,19 @@ export type ToolHosts = PlanReadingHosts & {
 export function registerTools(
   server: McpServer,
   operations: SceneOperations,
-  { catalog, geometryScripts, objectMakers, readFile, sceneViews, assetViews }: ToolHosts = {},
+  {
+    catalog,
+    geometryScripts,
+    objectMakers,
+    readFile,
+    sceneViews,
+    assetViews,
+    captureSourceResolver,
+    captureArtifactFetch,
+  }: ToolHosts = {},
 ): void {
   registerGetScene(server, operations)
+  registerGetCaptureEvidence(server, operations, { captureSourceResolver, captureArtifactFetch })
   registerSharedTools(server, operations, catalog, {
     assetViews,
     buildObject: (input) => compileObjectOnHost(geometryScripts, operations, input),
