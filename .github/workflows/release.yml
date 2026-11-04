@@ -391,6 +391,7 @@ jobs:
             echo "📦 @pascal-app/cli@$CLI_VERSION is already published; continuing release recovery"
           else
             npm publish --ignore-scripts --access public --tag "$NPM_TAG"
+            echo "CLI_PUBLISHED_THIS_RUN=1" >> "$GITHUB_ENV"
             echo "📦 Published @pascal-app/cli@$CLI_VERSION"
           fi
 
@@ -435,14 +436,16 @@ jobs:
         run: |
           TAG="@pascal-app/cli@$CLI_VERSION"
           ARCHIVE="build/pascal-web-runtime-$CLI_VERSION.tar.gz"
-          # On bump=none recovery, the CLI may already be published while a
-          # rebuilt runtime has different bytes. Its npm pin is the authority.
-          PACKED=$(npm pack --silent "@pascal-app/cli@$CLI_VERSION" --pack-destination "$RUNNER_TEMP")
-          tar -xOf "$RUNNER_TEMP/$PACKED" package/dist/runtime-source.json > "$RUNNER_TEMP/published-runtime-source.json"
-          RUNTIME_ARCHIVE="$ARCHIVE" \
-          PUBLISHED_RUNTIME_SOURCE="$RUNNER_TEMP/published-runtime-source.json" \
-          RUNTIME_VERSION="$CLI_VERSION" \
-            bun -e 'import { verifyPublishedRuntimeRelease } from "./src/runtime-download.ts"; await verifyPublishedRuntimeRelease(process.env.RUNTIME_ARCHIVE ?? "", process.env.PUBLISHED_RUNTIME_SOURCE ?? "", process.env.RUNTIME_VERSION ?? "")'
+          # A recovery run can rebuild different bytes for a version already on npm.
+          # A fresh publish uses this run's pin; npm propagation can lag its success.
+          if [ "${CLI_PUBLISHED_THIS_RUN:-}" != "1" ]; then
+            PACKED=$(npm pack --silent "@pascal-app/cli@$CLI_VERSION" --pack-destination "$RUNNER_TEMP")
+            tar -xOf "$RUNNER_TEMP/$PACKED" package/dist/runtime-source.json > "$RUNNER_TEMP/published-runtime-source.json"
+            RUNTIME_ARCHIVE="$ARCHIVE" \
+            PUBLISHED_RUNTIME_SOURCE="$RUNNER_TEMP/published-runtime-source.json" \
+            RUNTIME_VERSION="$CLI_VERSION" \
+              bun -e 'import { verifyPublishedRuntimeRelease } from "./src/runtime-download.ts"; await verifyPublishedRuntimeRelease(process.env.RUNTIME_ARCHIVE ?? "", process.env.PUBLISHED_RUNTIME_SOURCE ?? "", process.env.RUNTIME_VERSION ?? "")'
+          fi
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             [ "$NPM_TAG" = "beta" ] && PRERELEASE=--prerelease || PRERELEASE=
             gh release create "$TAG" $PRERELEASE --title "$TAG" --notes "The Pascal web editor runtime for \`@pascal-app/cli@$CLI_VERSION\`. The CLI downloads \`$(basename "$ARCHIVE")\` the first time a command starts the editor and verifies it against the digest published inside the npm package. Offline installs can pass the archive directly: \`pascal editor --runtime $(basename "$ARCHIVE")\`."
