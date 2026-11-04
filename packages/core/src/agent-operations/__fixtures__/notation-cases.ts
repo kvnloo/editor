@@ -330,6 +330,8 @@ export const NOT_LENGTHS = new Set([
   'author_scene.payload.levels[].lights[].intensity',
   'author_scene.payload.levels[].lights[].softness',
   'author_scene.payload.levels[].lights[].glow.strength',
+  // Image area is expressed as decimal megapixels, not linear length.
+  'plan_gigapixel_capture.megapixels',
   // move_node reads its sill/bottom height in metres and its yaw in degrees, as its description
   // says; the one notation (N1) is still owed on them.
   'move_node.y',

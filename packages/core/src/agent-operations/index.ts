@@ -26,6 +26,7 @@ import { moveRoofsToRoofLevel } from './move-roofs'
 import { paint } from './paint'
 import { placeInRoom } from './place-in-room'
 import { placeItems } from './place-items'
+import { planGigapixelCapture } from './plan-gigapixel-capture'
 import { ROOM_OPERATIONS } from './room-structure'
 import { searchAssets } from './search-assets'
 import { searchMaterials } from './search-materials'
@@ -82,6 +83,7 @@ export * from './move-plan'
 export * from './move-roofs'
 export * from './node-patch'
 export * from './paint'
+export * from './plan-gigapixel-capture'
 export * from './place-items'
 export * from './plan-geometry'
 export * from './point-context'
@@ -147,6 +149,7 @@ const SINGLE_OPERATIONS = {
   view_assets: viewAssets,
   search_materials: searchMaterials,
   get_site: getSite,
+  plan_gigapixel_capture: planGigapixelCapture,
   place_building: placeBuilding,
   ...ROOM_OPERATIONS,
   create_unit: createUnit,

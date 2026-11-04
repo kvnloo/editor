@@ -83,6 +83,7 @@ export const EXPECTED_OPENAI_TOOL_ANNOTATIONS = {
   place_design: policy(false, false, false),
   place_in_room: policy(false, false, false),
   place_items: policy(false, false, false),
+  plan_gigapixel_capture: policy(true, false, false),
   rebase_floor_reference: policy(false, true, false),
   redo: policy(false, true, false),
   remove_floor_opening: policy(false, true, false),
