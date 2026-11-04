@@ -9,6 +9,7 @@ export const getSceneOutput = {
   nodes: z.record(z.string(), z.unknown()),
   rootNodeIds: z.array(z.string()),
   collections: z.record(z.string(), z.unknown()).optional(),
+  materials: z.record(z.string(), z.unknown()),
   installedPlugins: z.array(z.string()).optional(),
 }
 
@@ -18,7 +19,7 @@ export function registerGetScene(server: McpServer, bridge: SceneOperations): vo
     {
       title: 'Get scene',
       description:
-        'Returns the full scene graph: flat node dictionary, root node IDs, collections, and explicit installed plugin IDs when present.',
+        'Returns the full scene graph: flat node dictionary, root node IDs, collections, material definitions, and explicit installed plugin IDs when present.',
       inputSchema: z.object(getSceneInput),
       outputSchema: z.object(getSceneOutput),
       annotations: READ_ONLY_TOOL_ANNOTATIONS,
@@ -29,6 +30,7 @@ export function registerGetScene(server: McpServer, bridge: SceneOperations): vo
         nodes: scene.nodes as Record<string, unknown>,
         rootNodeIds: scene.rootNodeIds,
         collections: (scene.collections ?? {}) as Record<string, unknown>,
+        materials: (scene.materials ?? {}) as Record<string, unknown>,
         ...(scene.installedPlugins ? { installedPlugins: scene.installedPlugins } : {}),
       }
       return {
