@@ -975,7 +975,8 @@ export const ThumbnailGenerator = ({ onThumbnailCapture }: ThumbnailGeneratorPro
               )._nodes?.nodeFrame?.update?.()
             // a sheet's picture goes to the sheets lossless: they pick its print encoding
             const mime = pose ? 'image/png' : undefined
-            const tiles = pose && pipeline ? tileGrid(width, height, limits.passEdge, TILE_OVERLAP) : []
+            const tiles =
+              pose && pipeline ? tileGrid(width, height, limits.passEdge, TILE_OVERLAP) : []
 
             if (tiles.length > 1 && pipeline) {
               // Past one pass (the GPU's biggest texture, or MAX_PASS_EDGE) the
