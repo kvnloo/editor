@@ -33,6 +33,7 @@ import {
   temporarilyShowShadowOnly,
   temporarilyVeilGround,
   temporarilyWithoutAmbiance,
+  tileGrid,
   useSceneAtmosphere,
   useViewer,
 } from '@pascal-app/viewer'
@@ -147,43 +148,6 @@ function captureLimits(renderer: unknown): CaptureLimits {
     ...(window as unknown as { __pascalCaptureLimits?: Partial<CaptureLimits> })
       .__pascalCaptureLimits,
   }
-}
-
-type Tile = {
-  /** The pixels the tile renders, overlap included. */
-  x: number
-  y: number
-  w: number
-  h: number
-  /** The pixels it contributes to the picture. */
-  inner: { x: number; y: number; w: number; h: number }
-}
-
-/**
- * A `width × height` picture split into equal tiles no larger than
- * `passEdge`, each rendered TILE_OVERLAP past its inner edges so the
- * screen-space passes (AO, ink, FXAA) have their neighbourhood at a seam.
- * One tile when the picture fits a pass.
- */
-export function tileGrid(width: number, height: number, passEdge: number): Tile[] {
-  const room = passEdge - 2 * TILE_OVERLAP
-  const cols = width <= passEdge ? 1 : Math.ceil(width / room)
-  const rows = height <= passEdge ? 1 : Math.ceil(height / room)
-  const tiles: Tile[] = []
-  for (let row = 0; row < rows; row++) {
-    for (let col = 0; col < cols; col++) {
-      const ix = Math.round((col * width) / cols)
-      const iy = Math.round((row * height) / rows)
-      const iw = Math.round(((col + 1) * width) / cols) - ix
-      const ih = Math.round(((row + 1) * height) / rows) - iy
-      const x = Math.max(0, ix - TILE_OVERLAP)
-      const y = Math.max(0, iy - TILE_OVERLAP)
-      const w = Math.min(width, ix + iw + TILE_OVERLAP) - x
-      const h = Math.min(height, iy + ih + TILE_OVERLAP) - y
-      tiles.push({ x, y, w, h, inner: { x: ix, y: iy, w: iw, h: ih } })
-    }
-  }
-  return tiles
 }
 
 /**
@@ -1011,7 +975,8 @@ export const ThumbnailGenerator = ({ onThumbnailCapture }: ThumbnailGeneratorPro
               )._nodes?.nodeFrame?.update?.()
             // a sheet's picture goes to the sheets lossless: they pick its print encoding
             const mime = pose ? 'image/png' : undefined
-            const tiles = pose && pipeline ? tileGrid(width, height, limits.passEdge) : []
+            const tiles =
+              pose && pipeline ? tileGrid(width, height, limits.passEdge, TILE_OVERLAP) : []
 
             if (tiles.length > 1 && pipeline) {
               // Past one pass (the GPU's biggest texture, or MAX_PASS_EDGE) the
