@@ -18,6 +18,89 @@ export type Homography = number[]
 
 export type RgbaImage = { width: number; height: number; data: Uint8ClampedArray }
 
+/** A measured point whose scene position and photograph pick both have known coordinates. */
+export type PhotoReprojectionCorrespondence = {
+  face: string
+  kind: 'row_corner' | 'known_point'
+  world: Vec3
+  observedPx: Pt
+  projectedPx: Pt | null
+}
+
+export type PhotoReprojectionResult = {
+  correspondences: {
+    face: string
+    kind: 'row_corner' | 'known_point'
+    observedPx: Pt
+    projectedPx: Pt | null
+    errorPx: number | null
+  }[]
+  rmsPx: number | null
+  tolerancePx: number | null
+  verdict: 'pass' | 'fail' | 'unknown'
+  reason?: 'insufficient_correspondences' | 'invalid_projection' | 'tolerance_not_provided'
+}
+
+/**
+ * Compare actual photo picks with the solved pose's projections. Four coplanar points can always
+ * define a homography, so a pass needs at least five distinct, non-collinear known scene points.
+ * Missing projections or a missing caller tolerance must never turn a fit into a pass.
+ */
+export function measurePhotoReprojection(
+  points: readonly PhotoReprojectionCorrespondence[],
+  tolerancePx?: number,
+): PhotoReprojectionResult {
+  const correspondences = points.map(({ face, kind, observedPx, projectedPx }) => ({
+    face,
+    kind,
+    observedPx,
+    projectedPx,
+    errorPx:
+      projectedPx && [...observedPx, ...projectedPx].every(Number.isFinite)
+        ? Math.hypot(projectedPx[0] - observedPx[0], projectedPx[1] - observedPx[1])
+        : null,
+  }))
+  const complete = correspondences.length > 0 && correspondences.every((p) => p.errorPx !== null)
+  const rmsPx = complete
+    ? Math.sqrt(
+        correspondences.reduce((sum, p) => sum + p.errorPx! ** 2, 0) /
+          correspondences.length,
+      )
+    : null
+  const unique = new Map<string, Vec3>()
+  for (const { world } of points) {
+    if (world.every(Number.isFinite))
+      unique.set(world.map((v) => Math.round(v * 1e6)).join(','), world)
+  }
+  const positions = [...unique.values()]
+  const origin = positions[0]
+  const second = origin
+    ? positions.find((p) => Math.hypot(...p.map((v, i) => v - origin[i]!)) > 1e-6)
+    : undefined
+  const spansArea =
+    origin !== undefined &&
+    second !== undefined &&
+    positions.some((p) => {
+      const a = second.map((v, i) => v - origin[i]!)
+      const b = p.map((v, i) => v - origin[i]!)
+      return (
+        Math.hypot(
+          a[1]! * b[2]! - a[2]! * b[1]!,
+          a[2]! * b[0]! - a[0]! * b[2]!,
+          a[0]! * b[1]! - a[1]! * b[0]!,
+        ) > 1e-6
+      )
+    })
+  const result = { correspondences, rmsPx, tolerancePx: tolerancePx ?? null }
+  if (points.length < 5 || positions.length < 5 || !spansArea)
+    return { ...result, verdict: 'unknown', reason: 'insufficient_correspondences' }
+  if (rmsPx === null || points.some((p) => !p.world.every(Number.isFinite)))
+    return { ...result, verdict: 'unknown', reason: 'invalid_projection' }
+  if (tolerancePx === undefined || !Number.isFinite(tolerancePx) || tolerancePx < 0)
+    return { ...result, verdict: 'unknown', reason: 'tolerance_not_provided' }
+  return { ...result, verdict: rmsPx <= tolerancePx ? 'pass' : 'fail' }
+}
+
 export function applyHomography(h: Homography, [x, y]: Pt): Pt | null {
   const w = h[6]! * x + h[7]! * y + h[8]!
   if (Math.abs(w) < 1e-12) return null

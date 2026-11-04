@@ -11,8 +11,10 @@ import {
   type Homography,
   invertHomography,
   lineIntersection,
+  measurePhotoReprojection,
   multiplyHomography,
   type PhotoCamera,
+  type PhotoReprojectionResult,
   pointOnFace,
   solveHomography,
   solvePhotoCamera,
@@ -59,6 +61,8 @@ export type PhotoElevationInput = {
    * it. A phone's main camera is about 26 mm.
    */
   focal35mm?: number
+  /** Maximum RMS reprojection error in photo pixels, required to declare a pass or fail. */
+  reprojectionTolerancePx?: number
   /** More vertical lines anywhere on the building, two points each: they steady the camera's tilt. */
   verticals?: Pt[][]
 }
@@ -143,6 +147,8 @@ export type PhotoPose = {
   focalAssumed: boolean
   /** The picked edges against the walls' ends projected through the pose, in photo pixels. */
   edgeResidualPx: number
+  /** Each known scene point against the camera's projected photo pixel, with an RMS verdict. */
+  reprojection: PhotoReprojectionResult
   /** How far the eye moves, in metres, when the picks move by their own error. */
   spread?: number
 }
@@ -865,6 +871,7 @@ function planOnce(
           seen.camera,
           [{ ...seen.anchor, bottom }],
           seen.focalAssumed,
+          input.reprojectionTolerancePx,
         ),
       },
     }
@@ -891,7 +898,15 @@ function planOnce(
     faces: plans,
     camera: {
       ...cameraSummary(solved.camera, solved.faces[0]!, solved.focalSpread),
-      pose: photoPose(nodes, elevations, faces, solved.camera, anchors, false),
+      pose: photoPose(
+        nodes,
+        elevations,
+        faces,
+        solved.camera,
+        anchors,
+        false,
+        input.reprojectionTolerancePx,
+      ),
     },
   }
 }
@@ -995,6 +1010,7 @@ function photoPose(
   camera: PhotoCamera,
   anchors: FaceAnchor[],
   focalAssumed: boolean,
+  tolerancePx?: number,
 ): PhotoPose | null {
   if (!faces.length) return null
   const ground = Math.min(...[...elevations.values()].map((level) => level.baseY))
@@ -1095,6 +1111,59 @@ function photoPose(
       return [offLine(edge, line)]
     })
   })
+
+  const projectKnown = (point: Vec3): Pt | null => {
+    const delta: Vec3 = [
+      point[0] - chosen.position[0],
+      point[1] - chosen.position[1],
+      point[2] - chosen.position[2],
+    ]
+    if (!(v3.dot(delta, chosen.forward) > 1e-9)) return null
+    const pixel = project(point)
+    return pixel.every(Number.isFinite) ? pixel : null
+  }
+  const correspondences = faces.flatMap((face, index) => {
+    const firstAlong = v3.dot(best!.places[index]!.right, [face.axis[0], 0, face.axis[1]]) > 0
+    const [leftEnd, rightEnd] = firstAlong ? face.ends : [face.ends[1], face.ends[0]]
+    const direction = firstAlong ? 1 : -1
+    const corners = face.rows.flatMap((row) => {
+      // A row without a measured height has no known world Y: do not count it as evidence.
+      if (row.height === undefined) return []
+      return [
+        { edge: face.left, end: leftEnd },
+        { edge: face.right, end: rightEnd },
+      ].flatMap(({ edge, end }) => {
+        if (!edge) return []
+        const observedPx = lineIntersection(row.points, edge)
+        if (!observedPx) return []
+        const world: Vec3 = [end[0], row.y, end[1]]
+        return [
+          {
+            face: face.name,
+            kind: 'row_corner' as const,
+            world,
+            observedPx,
+            projectedPx: projectKnown(world),
+          },
+        ]
+      })
+    })
+    const known = face.points.map(({ from, to }) => {
+      const world: Vec3 = [
+        leftEnd[0] + direction * face.axis[0] * from[0],
+        from[1],
+        leftEnd[1] + direction * face.axis[1] * from[0],
+      ]
+      return {
+        face: face.name,
+        kind: 'known_point' as const,
+        world,
+        observedPx: to,
+        projectedPx: projectKnown(world),
+      }
+    })
+    return [...corners, ...known]
+  })
   const round = (value: number) => Math.round(value * 1000) / 1000
   const r3 = (v: Vec3): Vec3 => [round(v[0]), round(v[1]), round(v[2])]
   return {
@@ -1108,5 +1177,6 @@ function photoPose(
     anchoredBy,
     focalAssumed,
     edgeResidualPx: round(Math.sqrt(mean(residuals.map((r) => r * r)))),
+    reprojection: measurePhotoReprojection(correspondences, tolerancePx),
   }
 }

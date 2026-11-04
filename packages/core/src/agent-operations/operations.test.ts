@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { z } from 'zod'
-import { AGENT_TOOL_CONTRACTS } from '../agent-tools'
+import { AGENT_TOOL_CONTRACTS, straightenFacadePhotoTool } from '../agent-tools'
+import { type PhotoReprojectionCorrespondence, measurePhotoReprojection } from '../building'
 import { type AgentRefusal, isAgentRefusal } from '../agent-tools/refusal'
 import { BuildingNode, SlabNode, WallNode } from '../index'
 import { reconcileSceneStructure } from '../lib/structure-reconcile'
@@ -16,7 +17,7 @@ import {
 import { AGENT_TOOL_CASES, finiteReadbackProblems } from './__fixtures__/cases'
 import { paintedKitchenScene } from './__fixtures__/room-cases'
 import { applyAgentOutcome } from './apply-outcome'
-import { AGENT_OPERATIONS, applySceneChanges } from './index'
+import { AGENT_OPERATIONS, applySceneChanges, planPhotoElevation } from './index'
 import { EMPTY_SESSION, keepInSession } from './scene-checkpoint'
 
 // Layer 1 of 3: the core operations, on every shared tool's edge cases.
@@ -300,4 +301,154 @@ test('scene verification validates registered plugin kinds, rejects malformed no
   } finally {
     restore()
   }
+})
+
+
+test('reprojection measures individual pixel errors and refuses an underconstrained pass', () => {
+  const corners: [number, number][] = [
+    [0, 0],
+    [5, 0],
+    [10, 0],
+    [0, 4],
+    [5, 4],
+    [10, 4],
+  ]
+  const exact: PhotoReprojectionCorrespondence[] = corners.map(([x, y]) => {
+    const projected: [number, number] = [100 + 40 * x, 480 - 40 * y]
+    return {
+      face: 'front',
+      kind: 'row_corner',
+      world: [x, y, 0],
+      observedPx: projected,
+      projectedPx: projected,
+    }
+  })
+  const matched = measurePhotoReprojection(exact, 2)
+  expect(matched.rmsPx).toBe(0)
+  expect(matched.correspondences.every((point) => point.errorPx === 0)).toBe(true)
+  expect(matched.verdict).toBe('pass')
+
+  const shifted: PhotoReprojectionCorrespondence[] = [
+    { ...exact[0]!, observedPx: [110, 480] },
+    ...exact.slice(1),
+  ]
+  const wrong = measurePhotoReprojection(shifted, 2)
+  // One 10 px miss among six picks: sqrt((10² + 5×0²) / 6) = 10/sqrt(6) px.
+  expect(wrong.correspondences[0]!.errorPx).toBe(10)
+  expect(wrong.rmsPx).toBeCloseTo(10 / Math.sqrt(6), 10)
+  expect(wrong.verdict).toBe('fail')
+  expect(measurePhotoReprojection(exact.slice(0, 4), 2)).toMatchObject({
+    verdict: 'unknown',
+    reason: 'insufficient_correspondences',
+  })
+  expect(measurePhotoReprojection(exact)).toMatchObject({
+    verdict: 'unknown',
+    reason: 'tolerance_not_provided',
+  })
+})
+
+test('straighten facade photo reports the solved pose residual without requiring new caller input', () => {
+  const building = BuildingNode.parse({ id: 'building_pose', children: ['level_pose'] })
+  const level = LevelNode.parse({
+    id: 'level_pose',
+    parentId: building.id,
+    level: 0,
+    height: 8,
+    children: ['wall_pose'],
+  })
+  const wall = WallNode.parse({
+    id: 'wall_pose',
+    parentId: level.id,
+    start: [0, 0],
+    end: [10, 0],
+    height: 8,
+  })
+  const nodes = Object.fromEntries([building, level, wall].map((node) => [node.id, node]))
+  const input: Parameters<typeof planPhotoElevation>[1] = {
+    faces: [
+      {
+        wallIds: [wall.id],
+        edges: {
+          left: [
+            [0.3, 0.2],
+            [0.3, 0.6],
+          ],
+          right: [
+            [0.7, 0.2],
+            [0.7, 0.6],
+          ],
+        },
+        rows: [
+          {
+            levelId: level.id,
+            height: 0,
+            points: [
+              [0.3, 0.6],
+              [0.7, 0.6],
+            ],
+          },
+          {
+            levelId: level.id,
+            height: 4,
+            points: [
+              [0.3, 0.4],
+              [0.7, 0.4],
+            ],
+          },
+          {
+            levelId: level.id,
+            height: 8,
+            points: [
+              [0.3, 0.2],
+              [0.7, 0.2],
+            ],
+          },
+        ],
+      },
+    ],
+    reprojectionTolerancePx: 2,
+  }
+  expect(
+    z.object(straightenFacadePhotoTool.input).safeParse({ source: 'photo.png', ...input }).success,
+  ).toBe(true)
+  const image = { width: 1000, height: 800 }
+  const exact = planPhotoElevation(nodes, input, image)
+  expect(exact.camera?.pose?.reprojection.correspondences).toHaveLength(6)
+  expect(exact.camera?.pose?.reprojection.rmsPx).toBeCloseTo(0, 5)
+  expect(exact.camera?.pose?.reprojection.verdict).toBe('pass')
+
+  const off = planPhotoElevation(
+    nodes,
+    {
+      ...input,
+      faces: [
+        {
+          ...input.faces[0]!,
+          points: [{ along: 5, height: 4, point: [0.51, 0.4] }],
+        },
+      ],
+    },
+    image,
+  )
+  expect(off.camera?.pose?.reprojection.correspondences).toHaveLength(7)
+  expect(off.camera?.pose?.reprojection.rmsPx).toBeGreaterThan(2)
+  expect(off.camera?.pose?.reprojection.verdict).toBe('fail')
+
+  const tooFew = planPhotoElevation(
+    nodes,
+    {
+      ...input,
+      faces: [{ ...input.faces[0]!, rows: input.faces[0]!.rows.slice(0, 2) }],
+    },
+    image,
+  )
+  expect(tooFew.camera?.pose?.reprojection).toMatchObject({
+    verdict: 'unknown',
+    reason: 'insufficient_correspondences',
+  })
+  const legacy = planPhotoElevation(nodes, { ...input, reprojectionTolerancePx: undefined }, image)
+  expect(legacy.camera?.pose?.reprojection).toMatchObject({
+    verdict: 'unknown',
+    reason: 'tolerance_not_provided',
+  })
 })

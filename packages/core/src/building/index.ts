@@ -8,6 +8,12 @@ export { buildLevelBelowChanges } from './level-insertion'
 export { buildExteriorWallCopy, levelExteriorWalls } from './level-wall-copy'
 export * from './merge-windows'
 export * from './opening-style-presets'
-export { type RgbaImage, warpImage } from './photo-elevation'
+export {
+  type PhotoReprojectionCorrespondence,
+  type PhotoReprojectionResult,
+  measurePhotoReprojection,
+  type RgbaImage,
+  warpImage,
+} from './photo-elevation'
 export * from './wall-openings'
 export * from './window-types'
