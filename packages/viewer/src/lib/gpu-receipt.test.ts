@@ -1,10 +1,6 @@
 // @ts-expect-error — bun:test types are provided by the runner, not viewer's declaration build.
 import { describe, expect, mock, test } from 'bun:test'
-import {
-  gpuReceipt,
-  initializeGpuRenderer,
-  type GpuReceiptSample,
-} from '../index'
+import { gpuReceipt, initializeGpuRenderer, type GpuReceiptSample } from '../index'
 
 const webgpuInitialization = {
   backend: 'webgpu',
@@ -18,8 +14,8 @@ const fourFrames: GpuReceiptSample[] = [10, 20, 30, 40].map((cpuMs) => ({
 }))
 
 describe('gpuReceipt', () => {
-  test('uses nearest-rank p50 and p95 for actual per-frame durations', () => {
-    const receipt = gpuReceipt([fourFrames[3], fourFrames[0], fourFrames[2], fourFrames[1]], {
+  test('uses nearest-rank p50 and p95 for per-frame samples', () => {
+    const receipt = gpuReceipt(fourFrames.slice().reverse(), {
       initialization: webgpuInitialization,
       budgetMs: 50,
     })

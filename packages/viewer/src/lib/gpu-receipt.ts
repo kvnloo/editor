@@ -20,8 +20,10 @@ type ReceiptPercentiles = {
   p95: number
 }
 
+type ReadyBackend = Extract<RendererInitializationResult<unknown>, { status: 'ready' }>['backend']
+
 export type GpuReceipt = {
-  backend: 'webgpu' | 'webgl'
+  backend: ReadyBackend
   frames: number
   cpu: ReceiptPercentiles & { max: number }
   gpu: ReceiptPercentiles | null
@@ -42,10 +44,7 @@ function assertDuration(ms: number, label: string): void {
 }
 
 /** Summarize correlated frames; this does not capture or prove a hardware run. */
-export function gpuReceipt(
-  samples: readonly GpuReceiptSample[],
-  meta: GpuReceiptMeta,
-): GpuReceipt {
+export function gpuReceipt(samples: readonly GpuReceiptSample[], meta: GpuReceiptMeta): GpuReceipt {
   if (meta.initialization.status !== 'ready') {
     throw new Error('GPU receipt needs a ready renderer initialization')
   }
