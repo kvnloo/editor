@@ -17,6 +17,7 @@ export {
   type DeepZoomTile,
 } from './deep-zoom'
 export { resolveCaptureFrameMatrix } from './frame'
+export { halveRgba } from './halve-rgba'
 export {
   type GigapixelCaptureFragment,
   type GigapixelCaptureOptions,
