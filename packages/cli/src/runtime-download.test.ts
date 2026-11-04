@@ -11,6 +11,7 @@ import {
   type RuntimeSource,
   readRuntimeSource,
   verifyArchiveDigest,
+  verifyPublishedRuntimeRelease,
 } from './runtime-download.js'
 import { createRuntimeArchive } from './tar.js'
 
@@ -53,6 +54,16 @@ describe('archive digest verification', () => {
 })
 
 describe('published runtime source', () => {
+  test('release recovery rejects new archive bytes for an already-published CLI', async () => {
+    const fixture = await createFixture()
+    const repacked = await tamper(fixture.archiveFile, path.join(fixture.root, 'repacked.tar.gz'))
+
+    await verifyPublishedRuntimeRelease(fixture.archiveFile, fixture.sourceFile, '1.2.3')
+    await expect(
+      verifyPublishedRuntimeRelease(repacked, fixture.sourceFile, '1.2.3'),
+    ).rejects.toMatchObject({ code: 'runtime_digest_mismatch' })
+  })
+
   test('reads the archive URL and digest committed with the CLI', async () => {
     const fixture = await createFixture()
 
