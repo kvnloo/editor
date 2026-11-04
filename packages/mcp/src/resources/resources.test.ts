@@ -4,8 +4,9 @@ import '../bridge/node-shims'
 import { beforeEach, describe, expect, test } from 'bun:test'
 import { Client } from '@modelcontextprotocol/client'
 import { InMemoryTransport, McpServer } from '@modelcontextprotocol/server'
-import { WallNode, ZoneNode } from '@pascal-app/core/schema'
+import { SceneMaterial, WallNode, ZoneNode } from '@pascal-app/core/schema'
 import useScene from '@pascal-app/core/store'
+import { registerGetScene } from '@pascal-app/mcp/tools/get-scene'
 import { SceneBridge } from '../bridge/scene-bridge'
 import { createPascalMcpServer } from '../server'
 import { InMemorySceneStore } from '../tools/scene-lifecycle/test-utils'
@@ -111,6 +112,47 @@ describe('pascal://scene/current', () => {
       await pair.close()
     }
   })
+  test('matches get_scene and the scene resource for saved wall finish materials', async () => {
+    const pair = await spinUp((server, bridge) => {
+      registerGetScene(server, bridge)
+      registerSceneCurrent(server, bridge)
+    })
+    try {
+      pair.bridge.loadDefault()
+      const level = Object.values(pair.bridge.getNodes()).find((node) => node.type === 'level')!
+      const material = SceneMaterial.parse({
+        id: 'mat_timber',
+        name: 'Warm timber',
+        material: { preset: 'wood', properties: { color: '#71503a', roughness: 0.86, metalness: 0 } },
+      })
+      const wall = WallNode.parse({
+        id: 'wall_finish',
+        start: [0, 0],
+        end: [3, 0],
+        slots: { a: `scene:${material.id}` },
+      })
+      pair.bridge.createNode(wall, level.id)
+      pair.bridge.loadJSON({
+        ...pair.bridge.exportJSON(),
+        materials: { [material.id]: material },
+      })
+
+      const tool = await pair.client.callTool({ name: 'get_scene', arguments: {} })
+      const resource = await pair.client.readResource({ uri: 'pascal://scene/current' })
+      const toolScene = JSON.parse((tool.content as Array<{ type: string; text: string }>)[0]!.text)
+      const resourceScene = JSON.parse((resource.contents[0] as { text: string }).text)
+
+      expect(tool.isError).toBeFalsy()
+      expect(toolScene.nodes[wall.id].slots.a).toBe(`scene:${material.id}`)
+      expect(resourceScene.nodes[wall.id].slots.a).toBe(`scene:${material.id}`)
+      expect(toolScene.materials).toEqual({ [material.id]: material })
+      expect(resourceScene.materials).toEqual(toolScene.materials)
+      expect(tool.structuredContent?.materials).toEqual(resourceScene.materials)
+    } finally {
+      await pair.close()
+    }
+  })
+
 })
 
 describe('pascal://scene/current/summary', () => {
