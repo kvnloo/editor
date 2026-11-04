@@ -20,6 +20,7 @@ on:
       - apps/editor/lib/self-host-auth.ts
       - apps/editor/lib/scene-api-security.ts
       - packages/cli/scripts/stage-runtime.ts
+      - scripts/docker-image-tags.ts
   workflow_dispatch:
 
 concurrency:

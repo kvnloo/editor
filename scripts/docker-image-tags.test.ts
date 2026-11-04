@@ -26,7 +26,9 @@ describe('Docker images publish in their repository namespace', () => {
       'refs/heads/feature',
       'refs/tags/v2.10.3',
     ]) {
-      expect(() => dockerImageTag('kvnloo/editor', ref)).toThrow('Unsupported Docker publish ref')
+      expect(() => dockerImageTag('kvnloo/editor', ref)).toThrow(
+        'Unsupported Docker publish ref',
+      )
     }
   })
 

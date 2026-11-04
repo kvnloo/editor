@@ -19,5 +19,6 @@ export function dockerImageTag(repository: string, ref: string): string {
 }
 
 if (import.meta.main) {
-  console.log(`tags=${dockerImageTag(process.env.GITHUB_REPOSITORY ?? '', process.env.GITHUB_REF ?? '')}`)
+  const tag = dockerImageTag(process.env.GITHUB_REPOSITORY ?? '', process.env.GITHUB_REF ?? '')
+  console.log(`tags=${tag}`)
 }
