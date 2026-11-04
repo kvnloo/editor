@@ -8,6 +8,14 @@ export {
   type CaptureStreamRenderer,
   type CaptureStreamRendererProps,
 } from './capture-runtime'
+export {
+  deepZoomDescriptor,
+  deepZoomLevelSize,
+  deepZoomMaxLevel,
+  deepZoomTiles,
+  type DeepZoomDescriptorOptions,
+  type DeepZoomTile,
+} from './deep-zoom'
 export { resolveCaptureFrameMatrix } from './frame'
 export {
   isCaptureLayerVisible,
