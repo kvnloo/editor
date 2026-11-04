@@ -42,46 +42,28 @@ describe('verifySourceFamily', () => {
   })
 
   test('a mismatch wins over missing legacy metadata', () => {
-    expect(
-      verifySourceFamily(master, [
-        { id: 'legacy-tile', mediaType: 'image/webp' },
-        derived('wrong-preview', OTHER_SHA),
-      ]),
-    ).toBe('fail')
+    const legacy = { id: 'legacy-tile', mediaType: 'image/webp' }
+    expect(verifySourceFamily(master, [legacy, derived('wrong-preview', OTHER_SHA)])).toBe('fail')
   })
 
   test('missing metadata or sourceMasterSha256 is unknown, never pass', () => {
-    expect(
-      verifySourceFamily(master, [{ id: 'legacy-preview', mediaType: 'image/webp' }]),
-    ).toBe('unknown')
-    expect(
-      verifySourceFamily(master, [
-        { id: 'legacy-tile', mediaType: 'image/webp', metadata: {} },
-      ]),
-    ).toBe('unknown')
-    expect(verifySourceFamily(master, [derived('preview', MASTER_SHA), {
-      id: 'legacy-tile',
-      mediaType: 'image/webp',
-    }])).toBe('unknown')
+    const legacy = { id: 'legacy-preview', mediaType: 'image/webp' }
+    expect(verifySourceFamily(master, [legacy])).toBe('unknown')
+    expect(verifySourceFamily(master, [{ ...legacy, metadata: {} }])).toBe('unknown')
+    expect(verifySourceFamily(master, [derived('preview', MASTER_SHA), legacy])).toBe('unknown')
   })
 
   test('a missing master digest or an empty derived set is unknown', () => {
-    expect(
-      verifySourceFamily({ id: 'master', mediaType: 'image/png' }, [
-        derived('preview', MASTER_SHA),
-      ]),
-    ).toBe('unknown')
+    const missingMaster = { id: 'master', mediaType: 'image/png' }
+    expect(verifySourceFamily(missingMaster, [derived('preview', MASTER_SHA)])).toBe('unknown')
     expect(verifySourceFamily(master, [])).toBe('unknown')
   })
 
   test('throws for malformed master, derived or declared source digests', () => {
-    expect(() => verifySourceFamily({ ...master, sha256: 'short' }, [
-      derived('preview', MASTER_SHA),
-    ])).toThrow('SHA-256')
-    expect(() => verifySourceFamily(master, [{
-      ...derived('preview', MASTER_SHA),
-      sha256: 'not-hex',
-    }])).toThrow('SHA-256')
+    const badMaster = { ...master, sha256: 'short' }
+    const badDerived = { ...derived('preview', MASTER_SHA), sha256: 'not-hex' }
+    expect(() => verifySourceFamily(badMaster, [derived('preview', MASTER_SHA)])).toThrow('SHA-256')
+    expect(() => verifySourceFamily(master, [badDerived])).toThrow('SHA-256')
     expect(() => verifySourceFamily(master, [derived('preview', 'f'.repeat(63))])).toThrow(
       'SHA-256',
     )
