@@ -16,6 +16,12 @@ export {
   type DeepZoomDescriptorOptions,
   type DeepZoomTile,
 } from './deep-zoom'
+export {
+  deepZoomTilesUrl,
+  deepZoomTileUrl,
+  parseDeepZoomDescriptor,
+  type ParsedDeepZoomDescriptor,
+} from './deep-zoom-source'
 export { resolveCaptureFrameMatrix } from './frame'
 export { halveRgba } from './halve-rgba'
 export {
@@ -60,9 +66,3 @@ export {
   parseDeviceTrajectoryPayload,
   sampleDeviceTrajectory,
 } from './trajectory'
-export {
-  deepZoomTilesUrl,
-  deepZoomTileUrl,
-  parseDeepZoomDescriptor,
-  type ParsedDeepZoomDescriptor,
-} from './deep-zoom-source'
