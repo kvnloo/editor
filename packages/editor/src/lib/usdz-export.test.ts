@@ -1,5 +1,5 @@
-import { exportSceneToUsdz } from '@pascal-app/editor'
 import { expect, test } from 'bun:test'
+import { exportSceneToUsdz } from '@pascal-app/editor'
 import { strFromU8, unzipSync } from 'fflate'
 import { BoxGeometry, Group, Mesh, MeshStandardMaterial } from 'three'
 
