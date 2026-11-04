@@ -51,3 +51,9 @@ export {
   parseDeviceTrajectoryPayload,
   sampleDeviceTrajectory,
 } from './trajectory'
+export {
+  deepZoomTilesUrl,
+  deepZoomTileUrl,
+  parseDeepZoomDescriptor,
+  type ParsedDeepZoomDescriptor,
+} from './deep-zoom-source'
