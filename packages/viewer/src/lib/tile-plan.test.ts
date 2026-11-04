@@ -11,7 +11,7 @@ for (const { width, height, cols, rows } of [
   { width: 3209, height: 2588, cols: 1, rows: 1 },
   { width: 4423, height: 3567, cols: 2, rows: 1 },
 ]) {
-  test(`${width}×${height}: inner rects partition the picture and outer rects stay in bounds`, () => {
+  test(`${width}×${height}: inner coverage and clipped render tiles`, () => {
     const tiles = tileGrid(width, height, PASS_EDGE, OVERLAP)
     expect(tiles).toHaveLength(cols * rows)
 
