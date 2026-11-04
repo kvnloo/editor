@@ -62,8 +62,7 @@ describe('streamGigapixelCapture', () => {
     // Level 12: 5 x 3; level 11: 3 x 2; level 10: 2 x 1;
     // levels 0..9 each contain one tile: 15 + 6 + 2 + 10 = 33.
     const counts = Array.from({ length: 13 }, (_, level) =>
-      Object.keys(files).filter((path) => path.startsWith('capture_files/' + level + '/'))
-        .length,
+      Object.keys(files).filter((path) => path.startsWith('capture_files/' + level + '/')).length,
     )
     expect(counts).toEqual([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 6, 15])
     expect(Object.keys(files)).toHaveLength(34)
@@ -85,9 +84,9 @@ describe('streamGigapixelCapture', () => {
 
     // Pixel (200,100) at level 11 averages source (400..401,200..201).
     const half = files['capture_files/11/0_0.webp']!
-    expect(Array.from(half.subarray((100 * 513 + 200) * 4, (100 * 513 + 201) * 4))).toEqual([
-      145, 201, 89, 255,
-    ])
+    expect(
+      Array.from(half.subarray((100 * 513 + 200) * 4, (100 * 513 + 201) * 4)),
+    ).toEqual([145, 201, 89, 255])
 
     const plan = planGigapixelCapture(options)
     expect(captured.passes).toBe(6)

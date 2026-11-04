@@ -1054,7 +1054,7 @@ export const ThumbnailGenerator = ({ onThumbnailCapture }: ThumbnailGeneratorPro
                   const canvas = new OffscreenCanvas(w, h)
                   const context = canvas.getContext('2d')
                   if (!context) throw new Error('The DeepZoom tile encoder could not be created')
-                  context.putImageData(new ImageData(rgba, w, h), 0, 0)
+                  context.putImageData(new ImageData(rgba as Uint8ClampedArray<ArrayBuffer>, w, h), 0, 0)
                   const blob = await canvas.convertToBlob({ type: 'image/webp', quality: 0.82 })
                   if (blob.type !== 'image/webp') {
                     throw new Error('This browser cannot encode WebP DeepZoom tiles')
