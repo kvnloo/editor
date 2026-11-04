@@ -112,6 +112,7 @@ describe('pascal://scene/current', () => {
       await pair.close()
     }
   })
+
   test('matches get_scene and the scene resource for saved wall finish materials', async () => {
     const pair = await spinUp((server, bridge) => {
       registerGetScene(server, bridge)
@@ -123,7 +124,10 @@ describe('pascal://scene/current', () => {
       const material = SceneMaterial.parse({
         id: 'mat_timber',
         name: 'Warm timber',
-        material: { preset: 'wood', properties: { color: '#71503a', roughness: 0.86, metalness: 0 } },
+        material: {
+          preset: 'wood',
+          properties: { color: '#71503a', roughness: 0.86, metalness: 0 },
+        },
       })
       const wall = WallNode.parse({
         id: 'wall_finish',
@@ -152,7 +156,6 @@ describe('pascal://scene/current', () => {
       await pair.close()
     }
   })
-
 })
 
 describe('pascal://scene/current/summary', () => {
