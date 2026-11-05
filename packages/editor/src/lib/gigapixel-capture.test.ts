@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 import { streamGigapixelCapture } from '@pascal-app/editor/gigapixel-capture'
+import {
+  createInMemoryGigapixelArtifactSink,
+  type GigapixelArtifactSink,
+} from '@pascal-app/editor/gigapixel-artifact-sink'
 import { deepZoomDescriptor, planGigapixelCapture } from '@pascal-app/viewer/capture'
 import { strFromU8, unzipSync } from 'fflate'
 
@@ -13,20 +17,9 @@ const options = {
   renderOverlap: 96,
 }
 
-function concatenate(chunks: Uint8Array[]): Uint8Array {
-  const length = chunks.reduce((sum, chunk) => sum + chunk.length, 0)
-  const combined = new Uint8Array(length)
-  let offset = 0
-  for (const chunk of chunks) {
-    combined.set(chunk, offset)
-    offset += chunk.length
-  }
-  return combined
-}
-
 describe('streamGigapixelCapture', () => {
   test('streams every DZI level, preserves a two-pass seam, and respects the pass bound', async () => {
-    const chunks: Uint8Array[] = []
+    const sink = createInMemoryGigapixelArtifactSink()
     const captured = await streamGigapixelCapture(
       options,
       (pass) => {
@@ -45,10 +38,10 @@ describe('streamGigapixelCapture', () => {
         return pixels
       },
       (rgba) => new Uint8Array(rgba),
-      (chunk) => chunks.push(chunk.slice()),
+      sink,
     )
 
-    const files = unzipSync(concatenate(chunks))
+    const files = unzipSync(new Uint8Array(await sink.blob().arrayBuffer()))
     expect(strFromU8(files['capture.dzi']!)).toBe(
       deepZoomDescriptor({
         width: 2050,
@@ -91,6 +84,9 @@ describe('streamGigapixelCapture', () => {
     const plan = planGigapixelCapture(options)
     expect(captured.passes).toBe(6)
     expect(captured.tilesWritten).toBe(33)
+    expect(captured.artifact.tileCount).toBe(33)
+    expect(captured.artifact.bytes).toBe(sink.blob().size)
+    expect(captured.artifact.sha256).toMatch(/^[0-9a-f]{64}$/)
     expect(captured.peakResidentPixels).toBeGreaterThan(0)
     expect(captured.peakResidentPixels).toBeLessThanOrEqual(plan.peakResidentPixels)
     expect(captured.planPeakResidentPixels).toBe(plan.peakResidentPixels)
@@ -102,8 +98,67 @@ describe('streamGigapixelCapture', () => {
         options,
         () => new Uint8ClampedArray(0),
         (rgba) => new Uint8Array(rgba),
-        () => {},
+        createInMemoryGigapixelArtifactSink(),
       ),
     ).rejects.toThrow('Render pass must return tightly packed RGBA pixels')
   })
+  function trackSink() {
+    const memory = createInMemoryGigapixelArtifactSink()
+    let aborts = 0
+    let finishes = 0
+    const sink: GigapixelArtifactSink = {
+      write: (entry) => memory.write(entry),
+      async finish() {
+        finishes += 1
+        return memory.finish()
+      },
+      async abort() {
+        aborts += 1
+        await memory.abort()
+      },
+    }
+    return { sink, memory, aborts: () => aborts, finishes: () => finishes }
+  }
+
+  test('a tile-source failure aborts exactly once and never finishes the ZIP', async () => {
+    const tracked = trackSink()
+    let pass = 0
+    await expect(
+      streamGigapixelCapture(
+        options,
+        (render) => {
+          if (pass++ === 2) throw new Error('tile source failed')
+          return new Uint8ClampedArray(render.w * render.h * 4)
+        },
+        (rgba) => new Uint8Array(rgba),
+        tracked.sink,
+      ),
+    ).rejects.toThrow('tile source failed')
+    expect(pass).toBe(3)
+    expect(tracked.aborts()).toBe(1)
+    expect(tracked.finishes()).toBe(0)
+    expect(() => tracked.memory.blob()).toThrow('has not been committed')
+  })
+
+  test('cancellation mid-stream aborts exactly once without a successful artifact', async () => {
+    const controller = new AbortController()
+    const tracked = trackSink()
+    let pass = 0
+    await expect(
+      streamGigapixelCapture(
+        { ...options, signal: controller.signal },
+        (render) => {
+          if (++pass === 2) controller.abort()
+          return new Uint8ClampedArray(render.w * render.h * 4)
+        },
+        (rgba) => new Uint8Array(rgba),
+        tracked.sink,
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(pass).toBe(2)
+    expect(tracked.aborts()).toBe(1)
+    expect(tracked.finishes()).toBe(0)
+    expect(() => tracked.memory.blob()).toThrow('has not been committed')
+  })
+
 })
