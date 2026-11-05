@@ -87,3 +87,57 @@ test('the caller controls the overlap independently of the picture', () => {
     expect({ x: tile.x, y: tile.y, w: tile.w, h: tile.h }).toEqual(tile.inner)
   }
 })
+
+for (const { input, args, reason } of [
+  { input: 'zero width', args: [0, 8, 7, 3], reason: 'width' },
+  { input: 'negative width', args: [-1, 8, 7, 3], reason: 'width' },
+  { input: 'fractional width', args: [1.5, 8, 7, 3], reason: 'width' },
+  { input: 'infinite width', args: [Infinity, 8, 7, 3], reason: 'width' },
+  { input: 'unsafe integer width', args: [Number.MAX_SAFE_INTEGER + 1, 8, 7, 3], reason: 'width' },
+  { input: 'zero height', args: [8, 0, 7, 3], reason: 'height' },
+  { input: 'negative height', args: [8, -1, 7, 3], reason: 'height' },
+  { input: 'fractional height', args: [8, 2.5, 7, 3], reason: 'height' },
+  { input: 'NaN height', args: [8, NaN, 7, 3], reason: 'height' },
+  { input: 'zero pass edge', args: [8, 8, 0, 0], reason: 'passEdge' },
+  { input: 'negative pass edge', args: [8, 8, -7, 0], reason: 'passEdge' },
+  { input: 'fractional pass edge', args: [8, 8, 7.5, 0], reason: 'passEdge' },
+  { input: 'infinite pass edge', args: [8, 8, Infinity, 0], reason: 'passEdge' },
+  { input: 'negative overlap', args: [8, 8, 7, -1], reason: 'overlap' },
+  { input: 'NaN overlap', args: [8, 8, 7, NaN], reason: 'overlap' },
+  { input: 'infinite overlap', args: [8, 8, 7, Infinity], reason: 'overlap' },
+  { input: 'zero interior', args: [8, 8, 8, 4], reason: 'overlap' },
+  { input: 'negative interior', args: [8, 8, 7, 4], reason: 'overlap' },
+] as const) {
+  test(`rejects ${input} with a RangeError`, () => {
+    expect(() => tileGrid(...args)).toThrow(RangeError)
+    expect(() => tileGrid(...args)).toThrow(reason)
+  })
+}
+
+test('an interior of exactly one pixel remains tileable', () => {
+  const tiles = tileGrid(8, 6, 7, 3)
+  expect(tiles).toHaveLength(8)
+  expect(tiles.map(({ x, w }) => [x, w])).toEqual([
+    [0, 4],
+    [0, 5],
+    [0, 6],
+    [0, 7],
+    [1, 7],
+    [2, 6],
+    [3, 5],
+    [4, 4],
+  ])
+  for (const [column, tile] of tiles.entries()) {
+    expect([tile.col, tile.row]).toEqual([column, 0])
+    expect(tile.inner).toEqual({ x: column, y: 0, w: 1, h: 6 })
+    expect(tile.h).toBe(6)
+  }
+})
+
+test('the existing two-pass fixture retains its exact serialized geometry', () => {
+  const expectedTiles = [
+    '{"col":0,"row":0,"x":0,"y":0,"w":2308,"h":3567,"inner":{"x":0,"y":0,"w":2212,"h":3567}}',
+    '{"col":1,"row":0,"x":2116,"y":0,"w":2307,"h":3567,"inner":{"x":2212,"y":0,"w":2211,"h":3567}}',
+  ]
+  expect(JSON.stringify(tileGrid(4423, 3567, PASS_EDGE, OVERLAP))).toBe(`[${expectedTiles.join(',')}]`)
+})

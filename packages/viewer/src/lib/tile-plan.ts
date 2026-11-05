@@ -18,6 +18,19 @@ export type Tile = {
  * One tile when the picture fits a pass.
  */
 export function tileGrid(width: number, height: number, passEdge: number, overlap: number): Tile[] {
+  for (const [name, value] of [
+    ['width', width],
+    ['height', height],
+    ['passEdge', passEdge],
+  ] as const) {
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      throw new RangeError(`${name} must be a positive safe integer`)
+    }
+  }
+  if (!Number.isFinite(overlap) || overlap < 0 || 2 * overlap >= passEdge) {
+    throw new RangeError('overlap must be finite and non-negative with 2 * overlap < passEdge')
+  }
+
   const room = passEdge - 2 * overlap
   const cols = width <= passEdge ? 1 : Math.ceil(width / room)
   const rows = height <= passEdge ? 1 : Math.ceil(height / room)
