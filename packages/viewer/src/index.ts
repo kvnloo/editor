@@ -256,7 +256,13 @@ export {
   siteSurfaces,
   temporarilyVeilGround,
 } from './lib/site-surfaces'
-export { resolveSolarKeyLight, type SolarKeyLight, type SolarStudy } from './lib/solar-study'
+export {
+  applySnapshotSolarKeyLight,
+  resolveSolarKeyLight,
+  type SolarKeyLight,
+  type SolarStudy,
+  VIEWER_KEY_LIGHT_NAME,
+} from './lib/solar-study'
 export {
   createPlainSnapshotPipeline,
   createSnapshotPipeline,

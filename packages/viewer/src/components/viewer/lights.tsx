@@ -10,7 +10,7 @@ import type {
 import * as THREE from 'three/webgpu'
 import { getKeyLightDirectionOverride } from '../../lib/key-light-override'
 import { SHADOW_ONLY_LAYER } from '../../lib/layers'
-import { resolveSolarKeyLight } from '../../lib/solar-study'
+import { resolveSolarKeyLight, VIEWER_KEY_LIGHT_NAME } from '../../lib/solar-study'
 import { registerSkyLights } from '../../lib/underground-ambiance'
 import useViewer, { groundVeiled } from '../../store/use-viewer'
 import { useSceneAtmosphere } from './scene-atmosphere'
@@ -420,6 +420,7 @@ export function Lights() {
           <directionalLight
             castShadow={index === 0 && keyCastsShadow}
             key={index}
+            name={index === 0 ? VIEWER_KEY_LIGHT_NAME : undefined}
             position={
               direction
                 ? [direction.x * 100, direction.y * 100, direction.z * 100]

@@ -1,6 +1,10 @@
-// @ts-expect-error — Bun types are not part of the viewer's production declaration build.
 import { expect, test } from 'bun:test'
-import { resolveSolarKeyLight } from '../index'
+import { DirectionalLight, Scene } from 'three'
+import {
+  applySnapshotSolarKeyLight,
+  resolveSolarKeyLight,
+  VIEWER_KEY_LIGHT_NAME,
+} from '../index'
 
 const summerNoon = new Date('2026-06-21T17:00:00Z')
 const summerSite = { lat: 40, lng: -75, northRotation: 0 }
@@ -57,4 +61,35 @@ test('missing or invalid site data does not replace the existing theme light', (
   expect(
     resolveSolarKeyLight({ date: new Date(NaN), site: { lat: 40, lng: -75 } }),
   ).toBeNull()
+})
+
+test('snapshot syncs the live NOAA solar direction without needing an animation frame', () => {
+  const study = { date: summerNoon, site: summerSite }
+  const live = resolveSolarKeyLight(study)
+  if (!live) throw new Error('Expected a valid summer sun')
+
+  const scene = new Scene()
+  const key = new DirectionalLight()
+  key.name = VIEWER_KEY_LIGHT_NAME
+  key.position.set(12, 13, 4)
+  key.target.position.set(2, 3, -6)
+  scene.add(key)
+  const fill = new DirectionalLight()
+  fill.position.set(-1, 5, -2)
+  scene.add(fill)
+  const distance = key.position.distanceTo(key.target.position)
+
+  applySnapshotSolarKeyLight(scene, study)
+  const captured = key.position.clone().sub(key.target.position).normalize()
+  // NOAA, 2026-06-21 17:00 UTC at 40 N, -75 E: azimuth 178.89°, elevation 73.45°.
+  expect(captured.x).toBeCloseTo(0.0055, 3)
+  expect(captured.y).toBeCloseTo(0.959, 3)
+  expect(captured.z).toBeCloseTo(0.285, 3)
+  expect(captured.x).toBeCloseTo(live.direction[0], 12)
+  expect(captured.y).toBeCloseTo(live.direction[1], 12)
+  expect(captured.z).toBeCloseTo(live.direction[2], 12)
+  expect(key.position.distanceTo(key.target.position)).toBeCloseTo(distance, 12)
+  expect(key.visible).toBe(live.visible)
+  expect(key.target.position.toArray()).toEqual([2, 3, -6])
+  expect(fill.position.toArray()).toEqual([-1, 5, -2])
 })

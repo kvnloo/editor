@@ -3,6 +3,7 @@ import { type SitePresentation, sceneRegistry } from '@pascal-app/core'
 import { act, create } from '@react-three/test-renderer'
 import { BoxGeometry, Color, type DirectionalLight, Mesh, Vector3 } from 'three'
 import { vec3 } from 'three/tsl'
+import { VIEWER_KEY_LIGHT_NAME } from '../../lib/solar-study'
 import { setKeyLightDirectionOverride } from '../../lib/key-light-override'
 import useViewer from '../../store/use-viewer'
 import { Lights } from './lights'
@@ -53,6 +54,7 @@ test('authored shadow coverage survives distant ground, then returns to automati
   try {
     await renderer.advanceFrames(1, 0.016)
     const light = renderer.scene.findByType('DirectionalLight').instance as DirectionalLight
+    expect(light.name).toBe(VIEWER_KEY_LIGHT_NAME)
     expect(light.position.toArray()).toEqual([-18, 35, 20])
     expect(light.target.position.toArray()).toEqual([0, 0, 0])
     expect(light.shadow.camera).toMatchObject({
