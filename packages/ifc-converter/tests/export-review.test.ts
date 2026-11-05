@@ -339,6 +339,93 @@ test('visible-only IFC spaces ignore hidden floor plates', () => {
   }
 })
 
+test('IFC spaces do not use floor plates excluded by node type', () => {
+  const zone = ZoneNode.parse({
+    id: 'zone_plate_type_exclusion',
+    parentId: 'level_r',
+    name: 'Type-filtered room',
+    polygon: square(4),
+    ceilingHeight: 2.7,
+  })
+  const plate = SlabNode.parse({
+    id: 'slab_type_excluded',
+    parentId: 'level_r',
+    polygon: square(4),
+    zoneIds: [zone.id],
+    elevation: 0.75,
+    thickness: 0.1,
+  })
+  const nodes = levelNodes(zone, plate)
+
+  for (const [excludedNodeTypes, floor, slabs] of [
+    [[], 0.75, 1],
+    [['slab'], 0, 0],
+  ] as const) {
+    const { ifc, summary } = buildIfcExport({ nodes, excludedNodeTypes, timestamp: EPOCH })
+    expect(summary.elements.IFCSLAB ?? 0).toBe(slabs)
+    withModel(ifc, (modelID) => {
+      const spaceIds = idsOf(modelID, WebIFC.IFCSPACE)
+      expect(spaceIds).toHaveLength(1)
+      const mesh = elementMesh(modelID, spaceIds[0]!)
+      expect(Math.min(...mesh.vertices.map(([, , z]) => z!))).toBeCloseTo(floor, 4)
+      expect(volume(mesh)).toBeCloseTo(16 * 2.7, 3)
+    })
+  }
+})
+
+test('visible-only IFC spaces ignore floor plates under a hidden level', () => {
+  const zone = ZoneNode.parse({
+    id: 'zone_plate_hidden_ancestor',
+    parentId: 'level_r',
+    name: 'Visible level room',
+    polygon: square(4),
+    ceilingHeight: 2.7,
+  })
+  const visiblePlate = SlabNode.parse({
+    id: 'slab_visible_ancestor_room',
+    parentId: 'level_r',
+    polygon: square(4),
+    zoneIds: [zone.id],
+    elevation: 0.15,
+    thickness: 0.1,
+  })
+  const hiddenLevel = LevelNode.parse({
+    id: 'level_hidden_plate',
+    level: 1,
+    height: 3,
+    visible: false,
+  })
+  const inheritedHiddenPlate = SlabNode.parse({
+    id: 'slab_inherited_hidden',
+    parentId: hiddenLevel.id,
+    polygon: square(4),
+    zoneIds: [zone.id],
+    elevation: 0.9,
+    thickness: 0.1,
+    visible: true,
+  })
+  const nodes: Record<string, AnyNode> = {
+    ...levelNodes(zone, visiblePlate),
+    [hiddenLevel.id]: { ...hiddenLevel, children: [inheritedHiddenPlate.id] } as AnyNode,
+    [inheritedHiddenPlate.id]: inheritedHiddenPlate,
+  }
+
+  for (const [onlyVisible, floor, slabs] of [
+    [false, 0.9, 2],
+    [true, 0.15, 1],
+  ] as const) {
+    const { ifc, summary } = buildIfcExport({ nodes, onlyVisible, timestamp: EPOCH })
+    expect(summary.elements.IFCSLAB).toBe(slabs)
+    withModel(ifc, (modelID) => {
+      const spaceIds = idsOf(modelID, WebIFC.IFCSPACE)
+      expect(spaceIds).toHaveLength(1)
+      const mesh = elementMesh(modelID, spaceIds[0]!)
+      expect(Math.min(...mesh.vertices.map(([, , z]) => z!))).toBeCloseTo(floor, 4)
+      expect(volume(mesh)).toBeCloseTo(16 * 2.7, 3)
+    })
+  }
+})
+
 describe('scaling', () => {
   // Rooms, their ceilings (explicit height, so core's resolver stays O(1)) and
   // roofs whose segments have no mesh: little output per node, so the timing
