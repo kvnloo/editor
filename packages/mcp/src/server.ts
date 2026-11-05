@@ -71,8 +71,12 @@ export type CreatePascalMcpServerOptions = {
   sceneViews?: SceneViewHost
   /** Resolves a scan node's capture session with the host's access policy. */
   captureSourceResolver?: CaptureSourceResolver
-  /** Fetches capture artifacts with the host's access policy; defaults to fetch. */
+  /** Trusted host fetch for capture artifacts. Otherwise an HTTPS allowlist is required. */
   captureArtifactFetch?: typeof globalThis.fetch
+  /** Scene-declared HTTP manifests and artifact URLs are denied unless their origin is listed. */
+  captureAllowedOrigins?: readonly string[]
+  /** Per-artifact read cap (default and maximum: 64 MiB). */
+  captureMaxArtifactBytes?: number
   /** Reads catalog items' pictures and surfaces before view_assets and paint. */
   assetViews?: PlanReadingHosts['assetViews']
   /** Lines the host adds to what a client reads at connect (the person's own settings). */
@@ -103,6 +107,8 @@ export function createPascalMcpServer(opts: CreatePascalMcpServerOptions): McpSe
     assetViews: opts.assetViews,
     captureSourceResolver: opts.captureSourceResolver,
     captureArtifactFetch: opts.captureArtifactFetch,
+    captureAllowedOrigins: opts.captureAllowedOrigins,
+    captureMaxArtifactBytes: opts.captureMaxArtifactBytes,
   })
   registerVisionTools(server, operations)
   if (opts.services) registerHostedServiceTools(server, opts.services)

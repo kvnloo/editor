@@ -62,10 +62,17 @@ export function registerTools(
     assetViews,
     captureSourceResolver,
     captureArtifactFetch,
+    captureAllowedOrigins,
+    captureMaxArtifactBytes,
   }: ToolHosts = {},
 ): void {
   registerGetScene(server, operations)
-  registerGetCaptureEvidence(server, operations, { captureSourceResolver, captureArtifactFetch })
+  registerGetCaptureEvidence(server, operations, {
+    captureSourceResolver,
+    captureArtifactFetch,
+    captureAllowedOrigins,
+    captureMaxArtifactBytes,
+  })
   registerSharedTools(server, operations, catalog, {
     assetViews,
     buildObject: (input) => compileObjectOnHost(geometryScripts, operations, input),

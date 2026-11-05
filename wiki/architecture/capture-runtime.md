@@ -20,6 +20,12 @@ scene graph.
   enter scene JSON.
 - A host owns source resolution, access control, signed URLs, persistence, retention, collaboration,
   and transport selection. Community's resolver uses its authenticated capture manifest route.
+- The MCP `get_capture_evidence` tool does not follow arbitrary scene-declared HTTP URLs by
+  default. A host must supply its capture source resolver (and its policy-checked artifact fetch)
+  or list explicit HTTPS origins. The fallback rejects local/file/IP-literal targets and
+  cross-origin redirects; manifests are capped at 1 MiB and artifact hashes at 64 MiB by default.
+  Host fetch adapters are trusted to enforce their own access control. DNS/private-address
+  resolution remains the responsibility of hosts that permit external domains.
 
 ## Static and live use the same source
 
