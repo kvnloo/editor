@@ -10,9 +10,11 @@ import {
   type GigapixelCapturePass,
 } from '@pascal-app/viewer/capture'
 import { streamDeepZoomZip, type DeepZoomZipTile } from './deep-zoom-zip'
+import type { GigapixelArtifactReceipt, GigapixelArtifactSink } from './gigapixel-artifact-sink'
 
 export interface StreamGigapixelOptions extends GigapixelCaptureOptions {
   name: string
+  signal?: AbortSignal
 }
 
 export type GigapixelRenderPass = (
@@ -31,6 +33,7 @@ export interface StreamGigapixelStats {
   /** One readback plus retained unfinished source fragments, excluding output tiles and ZIP. */
   peakResidentPixels: number
   planPeakResidentPixels: number
+  artifact: GigapixelArtifactReceipt
 }
 
 interface Piece {
@@ -79,12 +82,20 @@ function copyRect(
  * smaller level from the exact source rectangle of its completed children.
  * No level or render pass is assembled into a full-picture RGBA buffer.
  */
-export async function streamGigapixelCapture(
+async function captureToSink(
   options: StreamGigapixelOptions,
   renderPass: GigapixelRenderPass,
   encode: GigapixelEncodeTile,
-  onChunk: (chunk: Uint8Array) => void,
+  sink: GigapixelArtifactSink,
 ): Promise<StreamGigapixelStats> {
+  const checkCancelled = () => {
+    if (options.signal?.aborted) {
+      throw options.signal.reason instanceof Error
+        ? options.signal.reason
+        : new DOMException('Gigapixel capture cancelled', 'AbortError')
+    }
+  }
+  checkCancelled()
   const plan = planGigapixelCapture(options)
   const { width, height, tileSize, overlap } = options
   const maxLevel = deepZoomMaxLevel(width, height)
@@ -178,10 +189,13 @@ export async function streamGigapixelCapture(
     tile: DeepZoomTile,
     data: Uint8ClampedArray,
   ): AsyncGenerator<DeepZoomZipTile> {
+    checkCancelled()
     const bytes = await encode(data, tile.w, tile.h)
+    checkCancelled()
     if (!(bytes instanceof Uint8Array)) throw new TypeError('Encoder must return Uint8Array')
     tilesWritten += 1
     yield { level, col: tile.col, row: tile.row, bytes }
+    await sink.write({ kind: 'tile' })
 
     if (level === 0) return
     const tileKey = key(tile.col, tile.row)
@@ -212,8 +226,10 @@ export async function streamGigapixelCapture(
   async function* capturedTiles(): AsyncGenerator<DeepZoomZipTile> {
     try {
       for (const pass of plan.passes) {
+        checkCancelled()
         const { render } = pass
         let rgba: Uint8ClampedArray | null = await renderPass(render)
+        checkCancelled()
         if (!(rgba instanceof Uint8ClampedArray) || rgba.length !== render.w * render.h * 4) {
           throw new Error('Render pass must return tightly packed RGBA pixels')
         }
@@ -293,15 +309,39 @@ export async function streamGigapixelCapture(
     }
   }
 
-  await streamDeepZoomZip({ ...options, format: 'webp' }, capturedTiles(), onChunk)
+  await streamDeepZoomZip({ ...options, format: 'webp' }, capturedTiles(), (chunk) =>
+    sink.write({ kind: 'zip-chunk', bytes: chunk }),
+  )
+  checkCancelled()
   if (peakResidentPixels > plan.peakResidentPixels) {
     throw new Error('Readback and retained fragments exceeded the capture plan')
   }
 
+  const artifact = await sink.finish()
   return {
     passes: plan.passes.length,
     tilesWritten,
     peakResidentPixels,
     planPeakResidentPixels: plan.peakResidentPixels,
+    artifact,
+  }
+}
+
+/** A failed render, encoder, ZIP write, or cancellation never commits the artifact. */
+export async function streamGigapixelCapture(
+  options: StreamGigapixelOptions,
+  renderPass: GigapixelRenderPass,
+  encode: GigapixelEncodeTile,
+  sink: GigapixelArtifactSink,
+): Promise<StreamGigapixelStats> {
+  try {
+    return await captureToSink(options, renderPass, encode, sink)
+  } catch (error) {
+    try {
+      await sink.abort()
+    } catch (abortError) {
+      throw new AggregateError([error, abortError], 'Gigapixel capture and cleanup failed')
+    }
+    throw error
   }
 }

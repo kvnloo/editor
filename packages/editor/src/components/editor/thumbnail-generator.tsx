@@ -43,6 +43,7 @@ import { useCallback, useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { CanvasTarget, ClippingGroup, type WebGPURenderer } from 'three/webgpu'
 import { EDITOR_LAYER } from '../../lib/constants'
+import { createInMemoryGigapixelArtifactSink } from '../../lib/gigapixel-artifact-sink'
 import { streamGigapixelCapture } from '../../lib/gigapixel-capture'
 import {
   applySnapshotCapturePose,
@@ -64,6 +65,13 @@ export interface SnapshotCameraData {
   captureMode?: 'standard' | 'viewport' | 'area'
   resolution?: { w: number; h: number }
   presentation?: ThumbnailGenerateEvent['presentation']
+  artifact?: {
+    fileName: string
+    mimeType: 'application/zip'
+    bytes: number
+    sha256: string
+    tileCount: number
+  }
 }
 
 interface ThumbnailGeneratorProps {
@@ -609,6 +617,7 @@ export const ThumbnailGenerator = ({ onThumbnailCapture }: ThumbnailGeneratorPro
   const thumbnailCameraRef = useRef<THREE.PerspectiveCamera | null>(null)
   const pipelineRef = useRef<SnapshotPipeline | null>(null)
   const captureVersion = useRef(0)
+  const activeGigapixelCapture = useRef<AbortController | null>(null)
   // An ORTHOGRAPHIC capture (a sheet's elevation, 2026-09-10) needs its own
   // camera and its own pass — the pipeline binds the camera it was built
   // with — built on first use, kept until the atmosphere changes.
@@ -648,6 +657,7 @@ export const ThumbnailGenerator = ({ onThumbnailCapture }: ThumbnailGeneratorPro
 
     return () => {
       mounted = false
+      activeGigapixelCapture.current?.abort()
       captureVersion.current += 1
       thumbnailCameraRef.current = null
       pipelineRef.current?.dispose()
@@ -1001,18 +1011,29 @@ export const ThumbnailGenerator = ({ onThumbnailCapture }: ThumbnailGeneratorPro
             const mime = pose ? 'image/png' : undefined
 
             if (gigapixel && pipeline) {
-              const chunks: Uint8Array[] = []
+              const sink = createInMemoryGigapixelArtifactSink()
+              const controller = new AbortController()
+              activeGigapixelCapture.current = controller
               const stats = await streamGigapixelCapture(
                 {
                   name: 'capture',
                   width,
                   height,
+                  signal: controller.signal,
                   passEdge: limits.passEdge,
                   renderOverlap: TILE_OVERLAP,
                   tileSize: 512,
                   overlap: 1,
                 },
                 async (tile) => {
+                  if (
+                    version !== captureVersion.current ||
+                    perspectiveCamera !== thumbnailCameraRef.current ||
+                    (cameraPose && event.projectId !== useViewer.getState().projectId)
+                  ) {
+                    controller.abort()
+                  }
+                  controller.signal.throwIfAborted()
                   const shot = captureSnapshotScene((restore) => {
                     setUp(restore)
                     thumbnailCamera.setViewOffset(width, height, tile.x, tile.y, tile.w, tile.h)
@@ -1061,9 +1082,18 @@ export const ThumbnailGenerator = ({ onThumbnailCapture }: ThumbnailGeneratorPro
                   }
                   return new Uint8Array(await blob.arrayBuffer())
                 },
-                (chunk) => chunks.push(chunk.slice()),
-              )
-              const blob = new Blob(chunks, { type: 'application/zip' })
+                sink,
+              ).finally(() => {
+                if (activeGigapixelCapture.current === controller) {
+                  activeGigapixelCapture.current = null
+                }
+              })
+              const blob = sink.blob()
+              cameraData.artifact = {
+                fileName: 'capture.deepzoom.zip',
+                mimeType: 'application/zip',
+                ...stats.artifact,
+              }
               trace('capture:gigapixel', {
                 w: width,
                 h: height,
