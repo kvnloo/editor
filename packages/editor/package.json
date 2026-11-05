@@ -10,7 +10,9 @@
     "./locales": "./src/i18n/locales.ts",
     "./locales/pseudo": "./src/i18n/pseudo-locale.ts",
     "./procedural-items": "./src/components/procedural-items/inspector.tsx",
-    "./distribution": "./src/components/tools/distribution/distribution-public.ts"
+    "./distribution": "./src/components/tools/distribution/distribution-public.ts",
+    "./deep-zoom-zip": "./src/lib/deep-zoom-zip.ts",
+    "./gigapixel-capture": "./src/lib/gigapixel-capture.ts"
   },
   "scripts": {
     "bench:room-labels": "bun run src/components/editor/__bench__/room-label-placement.bench.ts",
