@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { collectDeepzoomAbab } from './deepzoom-abab-collector.mjs'
 import { summarizeDeepzoomAbab } from './deepzoom-abab.mjs'
+import { collectDeepzoomAbab } from './deepzoom-abab-collector.mjs'
 
 const sourceUrl = 'https://assets.example.test/campus.dzi?signature=unchanged'
 const viewerUrls = {
@@ -85,7 +85,8 @@ class FakePage {
       devicePixelRatio: slot % 2 === 0 ? 1 : 2,
       performance: { now: () => this.clockMs },
       requestAnimationFrame: (callback: (timestamp: number) => void) => {
-        const timestamp = (this.clockMs += 16)
+        this.clockMs += 16
+        const timestamp = this.clockMs
         queueMicrotask(() => callback(timestamp))
         return timestamp
       },
