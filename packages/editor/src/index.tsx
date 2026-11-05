@@ -63,6 +63,8 @@ export {
 export { useViewer } from '@pascal-app/viewer'
 export type { EditorProps } from './components/editor'
 export { default as Editor } from './components/editor'
+export { DeepZoomViewer } from './components/deep-zoom-viewer'
+export { deepZoomViewerOptions } from './components/deep-zoom-viewer-options'
 export { ActionMenuButton } from './components/editor/action-menu-button'
 // Headless component aliases: the implementation files keep their
 // internal names (`ParametricInspector`, `FloatingActionMenu`) because
