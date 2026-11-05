@@ -12,7 +12,7 @@ import {
   ZoneNode,
 } from '@pascal-app/core'
 import * as WebIFC from 'web-ifc'
-import { buildIfcExport, exportSceneToIfc, type IfcMeshPart } from '../src/export'
+import { buildIfcExport, exportSceneToIfc, type IfcMeshPart } from '@pascal-app/ifc-converter/export'
 import { box, node } from './export-scenes'
 import { expectWellFormedStep } from './export-step-check'
 
@@ -295,6 +295,48 @@ describe('slab body', () => {
     expect(extruded).not.toContain('IFCTRIANGULATEDFACESET(')
     expect(extruded).toContain('IFCEXTRUDEDAREASOLID(')
   })
+})
+
+test('visible-only IFC spaces ignore hidden floor plates', () => {
+  const zone = ZoneNode.parse({
+    id: 'zone_plate_visibility',
+    parentId: 'level_r',
+    name: 'Visible room',
+    polygon: square(4),
+    ceilingHeight: 2.7,
+  })
+  const visiblePlate = SlabNode.parse({
+    id: 'slab_visible_room',
+    parentId: 'level_r',
+    polygon: square(4),
+    zoneIds: [zone.id],
+    elevation: 0.2,
+    thickness: 0.1,
+  })
+  const hiddenPlate = SlabNode.parse({
+    id: 'slab_hidden_room',
+    parentId: 'level_r',
+    polygon: square(4),
+    zoneIds: [zone.id],
+    elevation: 0.8,
+    thickness: 0.1,
+    visible: false,
+  })
+  const nodes = levelNodes(zone, visiblePlate, hiddenPlate)
+
+  for (const [onlyVisible, floor, slabs] of [
+    [false, 0.8, 2],
+    [true, 0.2, 1],
+  ] as const) {
+    const { ifc, summary } = buildIfcExport({ nodes, onlyVisible, timestamp: EPOCH })
+    expect(summary.elements.IFCSLAB).toBe(slabs)
+    withModel(ifc, (modelID) => {
+      const [spaceId] = idsOf(modelID, WebIFC.IFCSPACE)
+      const mesh = elementMesh(modelID, spaceId!)
+      expect(Math.min(...mesh.vertices.map(([, , z]) => z!))).toBeCloseTo(floor, 4)
+      expect(volume(mesh)).toBeCloseTo(16 * 2.7, 3)
+    })
+  }
 })
 
 describe('scaling', () => {
