@@ -29,11 +29,13 @@ import {
 } from 'three/webgpu'
 import { GRADE_PARAMS, SSGI_PARAMS } from '../components/viewer/post-processing'
 import type { SceneAtmosphereSource } from '../components/viewer/scene-atmosphere'
+import useViewer from '../store/use-viewer'
 import { backdropColors, backdropGradient, flatBackdropOutput } from './backdrop'
 import { type EdgeMode, edgeColorFor, edgeOpacityScaleFor } from './edge-style'
 import { createEdgeDepthSampler, inkedEdges } from './ink-edges'
 import { sceneLightingMask, scenePassMrt } from './scene-pass-mrt'
 import type { SceneTheme } from './scene-themes'
+import { applySnapshotSolarKeyLight } from './solar-study'
 import { packNormalToRGB, unpackRGBToNormal } from './tsl-compat'
 
 export const THUMBNAIL_WIDTH = 1920
@@ -353,6 +355,10 @@ export async function createSnapshotPipeline({
         captureCamera.updateMatrixWorld()
         bgProjInvUniform.value.copy(captureCamera.projectionMatrixInverse)
         bgCamWorldUniform.value.copy(captureCamera.matrixWorld)
+
+        // No animation frame is guaranteed before an offline capture. Re-aim
+        // the existing key, preserving capture direction overrides and its shadow target.
+        applySnapshotSolarKeyLight(scene, useViewer.getState().solarStudy, sceneTheme.lights[0])
       },
       capture: async ({ captureMode, cropRegion, standardSize, mime }) => {
         const standardW = standardSize?.w ?? THUMBNAIL_WIDTH

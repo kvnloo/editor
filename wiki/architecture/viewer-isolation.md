@@ -53,6 +53,8 @@ The viewer accepts `children` and renders them inside the R3F canvas. This is th
 
 The viewer store contains **only presentation state**:
 
+A caller may opt into a transient sun study with `useViewer.getState().setSolarStudy({ date, site: { lat, lng, northRotation } })`. The first directional key points toward the computed sun in the plan's y-up frame, and is invisible below the horizon; ambient and other lights remain theme/atmosphere-driven. An invalid or missing location leaves the original key unchanged, `setSolarStudy(null)` restores it, and changing projects clears the study. The capture-specific key-direction override still takes priority. The study is neither authored site data nor a saved project look.
+
 - `selection` — which nodes are highlighted
 - `cameraMode` — perspective / orthographic
 - `levelMode` — stacked / exploded / solo / manual
@@ -64,7 +66,7 @@ If a piece of state is only meaningful inside the editor (e.g. active tool, phas
 
 The site's optional `presentation` field owns saved rendering defaults. The existing viewer store resolves explicit per-project browser choices above those defaults, then the normal theme. `sceneAppearance` is the resolved lighting/background/exposure/postprocessing used by the canvas and snapshots; `showSceneTheme` temporarily previews a preset without saving a choice. Anonymous embeds retain usable local controls without persisting an anonymous project entry. Site's Save current look writes through the normal scene owner; Use project look clears the local look. This does not change geometry, level ownership or plugin atmosphere precedence.
 
-Graph-backed viewers read the root site's presentation. A baked-asset host supplies the same saved value with `<Viewer presentation={site.presentation ?? null}>`; it does not need to mount the native graph. `presentation={null}` explicitly ignores authored appearance, as canonical bake/thumbnail hosts require. Supported fields are declared in `core/src/schema/site-presentation.ts`; display-family filtering and solar simulation are not implemented by this rendering slice.
+Graph-backed viewers read the root site's presentation. A baked-asset host supplies the same saved value with `<Viewer presentation={site.presentation ?? null}>`; it does not need to mount the native graph. `presentation={null}` explicitly ignores authored appearance, as canonical bake/thumbnail hosts require. Supported fields are declared in `core/src/schema/site-presentation.ts`; display-family filtering and persisted solar simulation are not implemented by this rendering slice.
 
 ## Nested Viewer for Editor-Specific Features
 

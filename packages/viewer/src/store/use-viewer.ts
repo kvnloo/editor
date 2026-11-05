@@ -23,6 +23,7 @@ import {
   SCENE_THEME_IDS,
   type SceneTheme,
 } from '../lib/scene-themes'
+import type { SolarStudy } from '../lib/solar-study'
 
 export type RenderContext = 'editor' | 'viewer'
 export type MetricNotation = 'meters' | 'millimeters'
@@ -73,6 +74,9 @@ type ViewerState = {
   lookDefaults: LookDefaults
   projectPresentation?: SitePresentation
   setProjectPresentation: (presentation: SitePresentation | undefined) => void
+  /** Opt-in site/date sun study, presentation only and never persisted. */
+  solarStudy: SolarStudy | null
+  setSolarStudy: (study: SolarStudy | null) => void
   resetProjectLook: () => void
   previewSceneTheme: string | null
   contextDefaultShading: RenderShading
@@ -572,6 +576,8 @@ const useViewer = create<ViewerState>()(
       projectPresentation: undefined,
       setProjectPresentation: (projectPresentation) =>
         set((state) => resolveLook(state, { projectPresentation })),
+      solarStudy: null,
+      setSolarStudy: (solarStudy) => set({ solarStudy }),
       resetProjectLook: () =>
         set((state) => {
           const projectPreferences = { ...state.projectPreferences }
@@ -745,6 +751,7 @@ const useViewer = create<ViewerState>()(
             projectId: id,
             projectPreferences,
             projectPresentation: undefined,
+            solarStudy: null,
             previewSceneTheme: null,
             framingOnly: false,
             framingShown: false,
