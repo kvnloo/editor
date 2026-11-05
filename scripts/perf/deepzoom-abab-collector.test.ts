@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { summarizeDeepzoomAbab } from './deepzoom-abab.mjs'
 import { collectDeepzoomAbab } from './deepzoom-abab-collector.mjs'
+import { summarizeDeepzoomAbab } from './deepzoom-abab.mjs'
 
 const sourceUrl = 'https://assets.example.test/campus.dzi?signature=unchanged'
 const viewerUrls = {
