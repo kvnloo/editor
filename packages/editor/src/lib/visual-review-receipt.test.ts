@@ -16,10 +16,7 @@ function capture(overrides: Partial<VisualReviewCapture> = {}): VisualReviewCapt
     width: 2,
     height: 2,
     rgba: new Uint8ClampedArray([
-      10, 20, 30, 255,
-      40, 50, 60, 255,
-      70, 80, 90, 255,
-      100, 110, 120, 255,
+      10, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255, 100, 110, 120, 255,
     ]),
     cameraPose: POSE,
     ...overrides,
