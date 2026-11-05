@@ -157,6 +157,83 @@ describe('streamDeepZoomZip', () => {
     expect(events).toEqual(['tile:0'])
   })
 
+
+  test('aborts between tiles without writing the second tile and cleans up once', async () => {
+    const controller = new AbortController()
+    const chunks: Uint8Array[] = []
+    let cleanup = 0
+    let tilesDelivered = 0
+
+    async function* tileSource(): AsyncGenerator<DeepZoomZipTile> {
+      tilesDelivered++
+      yield pyramid[0]!
+      controller.abort()
+      tilesDelivered++
+      yield pyramid[1]!
+    }
+
+    await expect(
+      streamDeepZoomZip(
+        { name: 'scan', ...descriptorOptions, signal: controller.signal, onCleanup: () => {
+          cleanup++
+        } },
+        tileSource(),
+        (chunk) => {
+          chunks.push(chunk.slice())
+        },
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(tilesDelivered).toBe(2)
+    expect(cleanup).toBe(1)
+    // The descriptor and first tile have been emitted; no second tile entry is started.
+    expect(concatenate(chunks).length).toBeGreaterThan(0)
+  })
+
+  test('aborts before start without delivering any entries', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    let chunks = 0
+    let cleanup = 0
+    await expect(streamDeepZoomZip(
+      { name: 'scan', ...descriptorOptions, signal: controller.signal, onCleanup: () => {
+          cleanup++
+        } },
+      pyramid,
+      () => {
+        chunks++
+      },
+    )).rejects.toMatchObject({ name: 'AbortError' })
+    expect(chunks).toBe(0)
+    expect(cleanup).toBe(1)
+  })
+
+  test('does not clean up after successful completion', async () => {
+    let cleanup = 0
+    await streamDeepZoomZip(
+      { name: 'scan', ...descriptorOptions, onCleanup: () => {
+          cleanup++
+        } },
+      pyramid,
+      () => {},
+    )
+    expect(cleanup).toBe(0)
+  })
+
+  test('cleans up exactly once on sink rejection', async () => {
+    let cleanup = 0
+    const failure = new Error('sink failed')
+    await expect(streamDeepZoomZip(
+      { name: 'scan', ...descriptorOptions, onCleanup: () => {
+          cleanup++
+        } },
+      pyramid,
+      () => {
+        throw failure
+      },
+    )).rejects.toBe(failure)
+    expect(cleanup).toBe(1)
+  })
+
   test('rejects unsafe paths and out-of-range tile coordinates', async () => {
     await expect(
       streamDeepZoomZip({ name: '../escape', ...descriptorOptions }, [], () => {}),
