@@ -5,6 +5,7 @@ import {
   BaseNode,
   DoorNode,
   type GeometryContext,
+  ItemNode,
   LevelNode,
   loadPlugin,
   type NodeDefinition,
@@ -15,10 +16,13 @@ import {
   SiteNode,
   sceneRegistry,
   useScene,
+  WallNode,
 } from '@pascal-app/core'
 import { evaluateRecipe, ProceduralItemNode, parseRecipe } from '@pascal-app/core/procedural-items'
+import { exportSceneToGlb, type GlbExportOptions } from '@pascal-app/editor'
 import {
   buildDoorPreviewMesh,
+  GRID_LAYER,
   markViewerPresentationTextureBorrowed,
   type ViewerPresentationContribution,
   viewerPresentationRegistry,
@@ -1082,6 +1086,115 @@ describe('prepareSceneForExport', () => {
       if (object.userData.pascalSwingLeaf) leafMarkerSurvived = true
     })
     expect(leafMarkerSurvived).toBe(false)
+  })
+
+  test('GLB bytes preserve wall and item identities without renderer markers', async () => {
+    const wallNode = WallNode.parse({
+      id: 'wall_glb_binary',
+      start: [0, 0],
+      end: [3, 0],
+      height: 2.4,
+      thickness: 0.2,
+    })
+    const itemNode = ItemNode.parse({
+      id: 'item_glb_binary',
+      name: 'Dining chair',
+      position: [1, 0, 1],
+      asset: {
+        id: 'dining-chair',
+        category: 'furniture',
+        name: 'Dining chair',
+        thumbnail: 'asset:dining-chair-thumbnail',
+        src: 'asset:dining-chair-model',
+        dimensions: [0.75, 1, 0.75],
+      },
+    })
+    const root = new THREE.Group()
+    root.name = 'scene-renderer'
+    const wall = new THREE.Group()
+    wall.userData.editorSelection = { selected: true }
+    const wallMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(3, 2.4, 0.2),
+      new THREE.MeshStandardMaterial(),
+    )
+    wallMesh.userData.rendererCache = { frame: 3 }
+    wall.add(wallMesh)
+    const item = new THREE.Group()
+    item.userData.editorSelection = { hovered: true }
+    const itemMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(0.75, 1, 0.75),
+      new THREE.MeshStandardMaterial(),
+    )
+    itemMesh.userData.rendererCache = { frame: 5 }
+    item.add(itemMesh)
+    // The live editor grid is a renderer-only sibling on GRID_LAYER (components/editor/grid.tsx).
+    const grid = new THREE.GridHelper(4, 4)
+    grid.name = 'pascal-editor-grid-input'
+    grid.layers.set(GRID_LAYER)
+    root.add(wall, item, grid)
+    sceneRegistry.nodes.set(wallNode.id, wall)
+    sceneRegistry.nodes.set(itemNode.id, item)
+
+    // Bun has Blob but not FileReader; adapt its real bytes for GLTFExporter.
+    const originalFileReader = globalThis.FileReader
+    class ExportFileReader {
+      result: ArrayBuffer | null = null
+      onloadend: (() => void) | null = null
+      readAsArrayBuffer(blob: Blob) {
+        void blob.arrayBuffer().then((buffer) => {
+          this.result = buffer
+          this.onloadend?.()
+        })
+      }
+    }
+    globalThis.FileReader = ExportFileReader as unknown as typeof FileReader
+    const options = { onlyVisible: true } satisfies GlbExportOptions
+    let bytes: ArrayBuffer
+    try {
+      bytes = await exportSceneToGlb(
+        root,
+        {
+          [wallNode.id]: wallNode,
+          [itemNode.id]: itemNode,
+        },
+        options,
+      )
+    } finally {
+      globalThis.FileReader = originalFileReader
+    }
+
+    const view = new DataView(bytes)
+    expect(view.getUint32(0, true)).toBe(0x46546c67)
+    expect(view.getUint32(4, true)).toBe(2)
+    expect(view.getUint32(8, true)).toBe(bytes.byteLength)
+    const jsonLength = view.getUint32(12, true)
+    expect(view.getUint32(16, true)).toBe(0x4e4f534a)
+    expect(jsonLength % 4).toBe(0)
+    const gltf = JSON.parse(
+      new TextDecoder().decode(new Uint8Array(bytes, 20, jsonLength)),
+    ) as {
+      nodes: Array<{ name?: string; extras?: Record<string, unknown> }>
+      meshes?: Array<{ name?: string; primitives: Array<{ mode?: number }> }>
+    }
+    expect(gltf.meshes).toHaveLength(2)
+    expect(gltf.nodes.some((node) => node.name === grid.name)).toBe(false)
+    expect(gltf.meshes?.some((mesh) => mesh.name === grid.name)).toBe(false)
+    expect(
+      gltf.meshes?.some((mesh) => mesh.primitives.some((primitive) => primitive.mode === 1)),
+    ).toBe(false)
+    for (const [id, kind] of [
+      [wallNode.id, 'wall'],
+      [itemNode.id, 'item'],
+    ] as const) {
+      expect(gltf.nodes.find((node) => node.extras?.pascalId === id)?.extras).toMatchObject({
+        pascalId: id,
+        kind,
+      })
+    }
+    for (const node of gltf.nodes) {
+      expect(node.extras?.editorSelection).toBeUndefined()
+      expect(node.extras?.rendererCache).toBeUndefined()
+    }
   })
 
   test('does not flag a door/window openable when no open clip bakes', () => {
