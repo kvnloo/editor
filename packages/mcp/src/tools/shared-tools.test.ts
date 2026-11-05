@@ -3,7 +3,13 @@ import { Client } from '@modelcontextprotocol/client'
 import { InMemoryTransport, McpServer } from '@modelcontextprotocol/server'
 import { type AgentOperations, planPhotoElevation } from '@pascal-app/core/agent-operations'
 import { type PluginAgentTools, refuse, straightenFacadePhotoTool } from '@pascal-app/core/agent-tools'
-import { type AnyNodeId, BuildingNode, type Collection, LevelNode } from '@pascal-app/core/schema'
+import {
+  type AnyNodeId,
+  BuildingNode,
+  type Collection,
+  LevelNode,
+  WallNode,
+} from '@pascal-app/core/schema'
 import { createPascalMcpServer } from '@pascal-app/mcp/server'
 import { z } from 'zod'
 import { AGENT_TOOL_CASES } from '../../../core/src/agent-operations/__fixtures__/cases'
@@ -376,13 +382,40 @@ test('straighten_facade_photo advertises and enforces its output schema over MCP
       {
         wallIds: [wall.id],
         edges: {
-          left: [[0.3, 0.2], [0.3, 0.6]],
-          right: [[0.7, 0.2], [0.7, 0.6]],
+          left: [
+            [0.3, 0.2],
+            [0.3, 0.6],
+          ],
+          right: [
+            [0.7, 0.2],
+            [0.7, 0.6],
+          ],
         },
         rows: [
-          { levelId: level.id, height: 0, points: [[0.3, 0.6], [0.7, 0.6]] },
-          { levelId: level.id, height: 4, points: [[0.3, 0.4], [0.7, 0.4]] },
-          { levelId: level.id, height: 8, points: [[0.3, 0.2], [0.7, 0.2]] },
+          {
+            levelId: level.id,
+            height: 0,
+            points: [
+              [0.3, 0.6],
+              [0.7, 0.6],
+            ],
+          },
+          {
+            levelId: level.id,
+            height: 4,
+            points: [
+              [0.3, 0.4],
+              [0.7, 0.4],
+            ],
+          },
+          {
+            levelId: level.id,
+            height: 8,
+            points: [
+              [0.3, 0.2],
+              [0.7, 0.2],
+            ],
+          },
         ],
       },
     ],
