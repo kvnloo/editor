@@ -1,8 +1,8 @@
 'use client'
 
-import { DeepZoomViewer } from '../../packages/editor/src/components/deep-zoom-viewer'
 import { createElement } from 'react'
 import { createRoot } from 'react-dom/client'
+import { DeepZoomViewer } from '../../packages/editor/src/components/deep-zoom-viewer'
 import {
   assertDeepzoomAbabSource,
   createDeepzoomAbabBridge,
