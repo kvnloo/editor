@@ -3,6 +3,7 @@ import { DirectionalLight, Scene } from 'three'
 import {
   applySnapshotSolarKeyLight,
   resolveSolarKeyLight,
+  resolveSolarKeyPose,
   VIEWER_KEY_LIGHT_NAME,
 } from '../index'
 
@@ -92,4 +93,72 @@ test('snapshot syncs the live NOAA solar direction without needing an animation 
   expect(key.visible).toBe(live.visible)
   expect(key.target.position.toArray()).toEqual([2, 3, -6])
   expect(fill.position.toArray()).toEqual([-1, 5, -2])
+})
+
+test('sun study enable and disable restores the exact theme pose and direction', () => {
+  const themeKey = { position: [-18, 35, 20], target: [2, 3, -6] } as const
+  const originalDirection = [-20, 32, 26]
+  const sun = resolveSolarKeyLight({ date: summerNoon, site: summerSite })
+  if (!sun) throw new Error('Expected a valid summer sun')
+
+  const studied = resolveSolarKeyPose(themeKey, sun)
+  expect(studied.position).not.toEqual(themeKey.position)
+  expect(studied.visible).toBe(true)
+
+  const restored = resolveSolarKeyPose(themeKey, null)
+  expect(restored).toEqual({
+    position: [-18, 35, 20],
+    target: [2, 3, -6],
+    visible: true,
+  })
+  expect(restored.position.map((value, index) => value - restored.target[index]!)).toEqual(
+    originalDirection,
+  )
+  expect(themeKey.position).toEqual([-18, 35, 20])
+})
+
+test('invalid study data and nonfinite solar vectors use the theme pose', () => {
+  const themeKey = { position: [8, 12, -5], target: [1, 2, 3] } as const
+  const themePose = resolveSolarKeyPose(themeKey, null)
+  expect(
+    resolveSolarKeyPose(
+      themeKey,
+      resolveSolarKeyLight({ date: summerNoon, site: { lat: NaN, lng: -75 } }),
+    ),
+  ).toEqual(themePose)
+  expect(resolveSolarKeyPose(themeKey, { direction: [NaN, 0, 0], visible: true })).toEqual(
+    themePose,
+  )
+  expect(resolveSolarKeyPose(themeKey, { direction: [Infinity, 0, 0], visible: true })).toEqual(
+    themePose,
+  )
+})
+
+test('snapshot resets a previously studied key but leaves never-studied scenes unchanged', () => {
+  const themeKey = { position: [-18, 35, 20], target: [2, 3, -6] } as const
+  const scene = new Scene()
+  const key = new DirectionalLight()
+  key.name = VIEWER_KEY_LIGHT_NAME
+  key.position.set(30, 45, 50)
+  key.target.position.set(4, 5, 6)
+  scene.add(key)
+  const legacyPosition = key.position.toArray()
+
+  applySnapshotSolarKeyLight(scene, null, themeKey)
+  expect(key.position.toArray()).toEqual(legacyPosition)
+  expect(key.target.position.toArray()).toEqual([4, 5, 6])
+
+  const valid = { date: summerNoon, site: summerSite }
+  applySnapshotSolarKeyLight(scene, valid, themeKey)
+  expect(key.position.toArray()).not.toEqual(legacyPosition)
+  applySnapshotSolarKeyLight(scene, null, themeKey)
+  expect(key.position.toArray()).toEqual([-18, 35, 20])
+  expect(key.target.position.toArray()).toEqual([2, 3, -6])
+  expect(key.visible).toBe(true)
+
+  applySnapshotSolarKeyLight(scene, valid, themeKey)
+  applySnapshotSolarKeyLight(scene, { date: new Date(NaN), site: summerSite }, themeKey)
+  expect(key.position.toArray()).toEqual([-18, 35, 20])
+  expect(key.target.position.toArray()).toEqual([2, 3, -6])
+  expect(key.visible).toBe(true)
 })

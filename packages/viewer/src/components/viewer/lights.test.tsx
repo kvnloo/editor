@@ -108,6 +108,66 @@ test('a capture can temporarily aim an authored light without losing its saved p
   }
 })
 
+test('non-shadow sun study releases the key back to the exact authored theme pose', async () => {
+  useViewer.getState().setProjectPresentation({
+    shadows: true,
+    lighting: {
+      lights: [
+        {
+          position: [-18, 35, 20],
+          target: [2, 3, -6],
+          color: '#ffffff',
+          intensity: 2,
+          castShadow: false,
+        },
+      ],
+    },
+  })
+
+  const renderer = await create(<Lights />)
+  try {
+    const light = renderer.scene.findByType('DirectionalLight').instance as DirectionalLight
+    await renderer.advanceFrames(1, 0.016)
+    expect(light.position.toArray()).toEqual([-18, 35, 20])
+
+    await act(async () => {
+      useViewer.getState().setSolarStudy({
+        date: new Date('2026-06-21T17:00:00Z'),
+        site: { lat: 40, lng: -75 },
+      })
+    })
+    await renderer.advanceFrames(1, 0.016)
+    expect(light.position.toArray()).not.toEqual([-18, 35, 20])
+
+    await act(async () => {
+      useViewer.getState().setSolarStudy(null)
+    })
+    await renderer.advanceFrames(1, 0.016)
+    expect(light.position.toArray()).toEqual([-18, 35, 20])
+    expect(light.target.position.toArray()).toEqual([2, 3, -6])
+    expect(light.visible).toBe(true)
+
+    await act(async () => {
+      useViewer.getState().setSolarStudy({
+        date: new Date('2026-06-21T17:00:00Z'),
+        site: { lat: 40, lng: -75 },
+      })
+    })
+    await renderer.advanceFrames(1, 0.016)
+    await act(async () => {
+      useViewer.getState().setSolarStudy({
+        date: new Date(NaN),
+        site: { lat: 40, lng: -75 },
+      })
+    })
+    await renderer.advanceFrames(1, 0.016)
+    expect(light.position.toArray()).toEqual([-18, 35, 20])
+    expect(light.target.position.toArray()).toEqual([2, 3, -6])
+  } finally {
+    await renderer.unmount()
+  }
+})
+
 test('an atmosphere owns the light while mounted and releases back to the authored shadow', async () => {
   const source: SceneAtmosphereSource = {
     skyRadiance: () => vec3(1),

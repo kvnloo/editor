@@ -259,7 +259,9 @@ export {
 export {
   applySnapshotSolarKeyLight,
   resolveSolarKeyLight,
+  resolveSolarKeyPose,
   type SolarKeyLight,
+  type SolarKeyPose,
   type SolarStudy,
   VIEWER_KEY_LIGHT_NAME,
 } from './lib/solar-study'

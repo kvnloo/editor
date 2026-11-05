@@ -12,7 +12,51 @@ export type SolarKeyLight = {
   visible: boolean
 }
 
+export type SolarKeyPose = {
+  position: [number, number, number]
+  target: [number, number, number]
+  visible: boolean
+}
+
+type ThemeKeyPose = {
+  position: readonly [number, number, number]
+  target?: readonly [number, number, number]
+}
+
 export const VIEWER_KEY_LIGHT_NAME = 'pascal-viewer-key-light'
+
+// A live frame may aim the key at the sun before a frame-less snapshot needs to reset it.
+const solarAimedKeys = new WeakSet<object>()
+
+export function trackSolarKeyPose(light: object, active: boolean): void {
+  if (active) solarAimedKeys.add(light)
+  else solarAimedKeys.delete(light)
+}
+
+/** Decide the key pose without mutating lights or changing the theme's configured direction. */
+export function resolveSolarKeyPose(
+  themeKey: ThemeKeyPose,
+  solarLight: SolarKeyLight | null,
+): SolarKeyPose {
+  const [x, y, z] = themeKey.position
+  const [tx, ty, tz] = themeKey.target ?? [0, 0, 0]
+  const direction = solarLight?.direction
+
+  if (!direction || !direction.every(Number.isFinite) || Math.hypot(...direction) === 0) {
+    return { position: [x, y, z], target: [tx, ty, tz], visible: true }
+  }
+
+  const distance = Math.hypot(x - tx, y - ty, z - tz) || 100
+  return {
+    position: [
+      tx + direction[0] * distance,
+      ty + direction[1] * distance,
+      tz + direction[2] * distance,
+    ],
+    target: [tx, ty, tz],
+    visible: solarLight.visible,
+  }
+}
 
 /** Resolve a site's true-north sun to a direction toward the sun in Pascal's world frame. */
 export function resolveSolarKeyLight(study: SolarStudy | null): SolarKeyLight | null {
@@ -32,22 +76,37 @@ export function resolveSolarKeyLight(study: SolarStudy | null): SolarKeyLight | 
     return null
 
   const { azimuthDeg, elevationDeg } = solarPosition(study.date, lat, lng)
-  return {
-    direction: sunDirectionInPlan(azimuthDeg, elevationDeg, northRotation),
-    visible: elevationDeg >= 0,
-  }
+  const direction = sunDirectionInPlan(azimuthDeg, elevationDeg, northRotation)
+  if (!Number.isFinite(elevationDeg) || !direction.every(Number.isFinite)) return null
+
+  return { direction, visible: elevationDeg >= 0 }
 }
 
 /** Refresh the viewer's key for offline captures that do not advance the R3F frame. */
-export function applySnapshotSolarKeyLight(scene: Scene, study: SolarStudy | null): void {
+export function applySnapshotSolarKeyLight(
+  scene: Scene,
+  study: SolarStudy | null,
+  themeKey?: ThemeKeyPose,
+): void {
   if (getKeyLightDirectionOverride()) return
   const solarLight = resolveSolarKeyLight(study)
-  if (!solarLight) return
-
   const key = scene.getObjectByName(VIEWER_KEY_LIGHT_NAME)
   if (!(key instanceof DirectionalLight)) return
+
+  if (!solarLight) {
+    // Never disturb legacy frames unless a live frame or capture first aimed this key at the sun.
+    if (!themeKey || !solarAimedKeys.has(key)) return
+    const pose = resolveSolarKeyPose(themeKey, null)
+    key.position.set(...pose.position)
+    key.target.position.set(...pose.target)
+    key.target.updateMatrixWorld()
+    key.visible = pose.visible
+    trackSolarKeyPose(key, false)
+    return
+  }
 
   const distance = key.position.distanceTo(key.target.position) || 1
   key.position.set(...solarLight.direction).multiplyScalar(distance).add(key.target.position)
   key.visible = solarLight.visible
+  trackSolarKeyPose(key, true)
 }

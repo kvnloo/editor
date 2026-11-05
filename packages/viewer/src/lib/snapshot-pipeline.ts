@@ -358,7 +358,7 @@ export async function createSnapshotPipeline({
 
         // No animation frame is guaranteed before an offline capture. Re-aim
         // the existing key, preserving capture direction overrides and its shadow target.
-        applySnapshotSolarKeyLight(scene, useViewer.getState().solarStudy)
+        applySnapshotSolarKeyLight(scene, useViewer.getState().solarStudy, sceneTheme.lights[0])
       },
       capture: async ({ captureMode, cropRegion, standardSize, mime }) => {
         const standardW = standardSize?.w ?? THUMBNAIL_WIDTH

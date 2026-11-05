@@ -10,7 +10,12 @@ import type {
 import * as THREE from 'three/webgpu'
 import { getKeyLightDirectionOverride } from '../../lib/key-light-override'
 import { SHADOW_ONLY_LAYER } from '../../lib/layers'
-import { resolveSolarKeyLight, VIEWER_KEY_LIGHT_NAME } from '../../lib/solar-study'
+import {
+  resolveSolarKeyLight,
+  resolveSolarKeyPose,
+  trackSolarKeyPose,
+  VIEWER_KEY_LIGHT_NAME,
+} from '../../lib/solar-study'
 import { registerSkyLights } from '../../lib/underground-ambiance'
 import useViewer, { groundVeiled } from '../../store/use-viewer'
 import { useSceneAtmosphere } from './scene-atmosphere'
@@ -307,16 +312,14 @@ export function Lights() {
       }
     }
 
-    // Non-shadow keys have no building-fit pass; aim them directly at the site sun.
-    if (studyLight && (!shadows || !castsShadow)) {
+    // Non-shadow keys have no building-fit pass; restore the theme pose when the study ends.
+    if ((!shadows || !castsShadow) && (!atmosphere || studyLight)) {
       const key = lightRefs.current[0]
-      if (key) {
-        const config = theme.lights[0]
-        const [tx, ty, tz] = config?.target ?? [0, 0, 0]
-        const [x, y, z] = config?.position ?? [0, 100, 0]
-        const distance = Math.hypot(x - tx, y - ty, z - tz) || 100
-        key.target.position.set(tx, ty, tz)
-        key.position.set(...studyLight.direction).multiplyScalar(distance).add(key.target.position)
+      const config = theme.lights[0]
+      if (key && (config || studyLight)) {
+        const pose = resolveSolarKeyPose(config ?? { position: [0, 100, 0] }, studyLight)
+        key.target.position.set(...pose.target)
+        key.position.set(...pose.position)
         key.target.updateMatrixWorld()
       }
     }
@@ -324,7 +327,10 @@ export function Lights() {
     for (const index of lightSlots) {
       const light = lightRefs.current[index]
       if (!light) continue
-      if (index === 0) light.visible = studyLight?.visible ?? true
+      if (index === 0) {
+        light.visible = studyLight?.visible ?? true
+        trackSolarKeyPose(light, studyLight !== null)
+      }
       const config = theme.lights[index]
       const intensity = atmosphere
         ? index === 0
