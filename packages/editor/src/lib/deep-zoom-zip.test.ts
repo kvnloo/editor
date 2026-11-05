@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { streamDeepZoomZip, type DeepZoomZipTile } from '@pascal-app/editor/deep-zoom-zip'
+import { type DeepZoomZipTile, streamDeepZoomZip } from '@pascal-app/editor/deep-zoom-zip'
 import { deepZoomDescriptor } from '@pascal-app/viewer/capture'
 import { strFromU8, unzipSync } from 'fflate'
 
@@ -28,6 +28,29 @@ function concatenate(chunks: Uint8Array[]): Uint8Array {
     offset += chunk.length
   }
   return result
+}
+
+function localZipEntryNames(chunks: Uint8Array[]): string[] {
+  const archive = concatenate(chunks)
+  const view = new DataView(archive.buffer, archive.byteOffset, archive.byteLength)
+  const names: string[] = []
+
+  for (let offset = 0; offset <= archive.length - 30; offset++) {
+    if (view.getUint32(offset, true) !== 0x04034b50) {
+      continue
+    }
+    const nameLength = view.getUint16(offset + 26, true)
+    const extraLength = view.getUint16(offset + 28, true)
+    const nameStart = offset + 30
+    const nameEnd = nameStart + nameLength
+    if (nameEnd + extraLength > archive.length) {
+      throw new RangeError('truncated ZIP local file header')
+    }
+    names.push(strFromU8(archive.subarray(nameStart, nameEnd)))
+    offset = nameEnd + extraLength - 1
+  }
+
+  return names
 }
 
 describe('streamDeepZoomZip', () => {
@@ -157,7 +180,6 @@ describe('streamDeepZoomZip', () => {
     expect(events).toEqual(['tile:0'])
   })
 
-
   test('aborts between tiles without writing the second tile and cleans up once', async () => {
     const controller = new AbortController()
     const chunks: Uint8Array[] = []
@@ -174,9 +196,14 @@ describe('streamDeepZoomZip', () => {
 
     await expect(
       streamDeepZoomZip(
-        { name: 'scan', ...descriptorOptions, signal: controller.signal, onCleanup: () => {
-          cleanup++
-        } },
+        {
+          name: 'scan',
+          ...descriptorOptions,
+          signal: controller.signal,
+          onCleanup: () => {
+            cleanup++
+          },
+        },
         tileSource(),
         (chunk) => {
           chunks.push(chunk.slice())
@@ -185,8 +212,9 @@ describe('streamDeepZoomZip', () => {
     ).rejects.toMatchObject({ name: 'AbortError' })
     expect(tilesDelivered).toBe(2)
     expect(cleanup).toBe(1)
-    // The descriptor and first tile have been emitted; no second tile entry is started.
-    expect(concatenate(chunks).length).toBeGreaterThan(0)
+    const entryNames = localZipEntryNames(chunks)
+    expect(entryNames).toEqual(['scan.dzi', 'scan_files/0/0_0.webp'])
+    expect(entryNames).not.toContain('scan_files/1/0_0.webp')
   })
 
   test('aborts before start without delivering any entries', async () => {
@@ -194,15 +222,22 @@ describe('streamDeepZoomZip', () => {
     controller.abort()
     let chunks = 0
     let cleanup = 0
-    await expect(streamDeepZoomZip(
-      { name: 'scan', ...descriptorOptions, signal: controller.signal, onCleanup: () => {
-          cleanup++
-        } },
-      pyramid,
-      () => {
-        chunks++
-      },
-    )).rejects.toMatchObject({ name: 'AbortError' })
+    await expect(
+      streamDeepZoomZip(
+        {
+          name: 'scan',
+          ...descriptorOptions,
+          signal: controller.signal,
+          onCleanup: () => {
+            cleanup++
+          },
+        },
+        pyramid,
+        () => {
+          chunks++
+        },
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' })
     expect(chunks).toBe(0)
     expect(cleanup).toBe(1)
   })
@@ -210,9 +245,13 @@ describe('streamDeepZoomZip', () => {
   test('does not clean up after successful completion', async () => {
     let cleanup = 0
     await streamDeepZoomZip(
-      { name: 'scan', ...descriptorOptions, onCleanup: () => {
+      {
+        name: 'scan',
+        ...descriptorOptions,
+        onCleanup: () => {
           cleanup++
-        } },
+        },
+      },
       pyramid,
       () => {},
     )
@@ -222,15 +261,21 @@ describe('streamDeepZoomZip', () => {
   test('cleans up exactly once on sink rejection', async () => {
     let cleanup = 0
     const failure = new Error('sink failed')
-    await expect(streamDeepZoomZip(
-      { name: 'scan', ...descriptorOptions, onCleanup: () => {
-          cleanup++
-        } },
-      pyramid,
-      () => {
-        throw failure
-      },
-    )).rejects.toBe(failure)
+    await expect(
+      streamDeepZoomZip(
+        {
+          name: 'scan',
+          ...descriptorOptions,
+          onCleanup: () => {
+            cleanup++
+          },
+        },
+        pyramid,
+        () => {
+          throw failure
+        },
+      ),
+    ).rejects.toBe(failure)
     expect(cleanup).toBe(1)
   })
 

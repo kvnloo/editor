@@ -1,8 +1,8 @@
 import {
+  type DeepZoomDescriptorOptions,
   deepZoomDescriptor,
   deepZoomLevelSize,
   deepZoomMaxLevel,
-  type DeepZoomDescriptorOptions,
 } from '@pascal-app/viewer/capture'
 import { strToU8, Zip, ZipPassThrough } from 'fflate'
 
@@ -85,7 +85,7 @@ export async function streamDeepZoomZip(
       if (!(tile.bytes instanceof Uint8Array)) {
         throw new TypeError('tile bytes must be a Uint8Array')
       }
-  
+
       await addEntry(
         name + '_files/' + tile.level + '/' + tile.col + '_' + tile.row + '.' + format,
         tile.bytes,
