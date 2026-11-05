@@ -33,6 +33,7 @@ type ClipState = {
 }
 
 const clipStates = new WeakMap<THREE.Mesh, ClipState>()
+const levelsWithClips = new WeakSet<THREE.Object3D>()
 // Tolerance for the plane splits (metres) and for "nothing to cut".
 const SPLIT_EPSILON = 1e-6
 
@@ -225,6 +226,19 @@ function roofKeyOf(patches: readonly RoofUndersidePatch[]) {
 const scratchMatrix = new THREE.Matrix4()
 const scratchBox = new THREE.Box3()
 
+function restoreLevelClips(levelObject: THREE.Object3D) {
+  levelObject.traverse((object) => {
+    const mesh = object as THREE.Mesh
+    if (!mesh.isMesh) return
+    const state = clipStates.get(mesh)
+    if (!state) return
+    if (mesh.geometry === state.clipped) mesh.geometry = state.source
+    if (state.clipped !== state.source) state.clipped.dispose()
+    clipStates.delete(mesh)
+  })
+  levelsWithClips.delete(levelObject)
+}
+
 /**
  * Cuts the meshes of every level at the roofs above them. Cheap when nothing
  * changed: a mesh is re-cut only when its geometry, its placement or the roofs
@@ -233,7 +247,6 @@ const scratchBox = new THREE.Box3()
 export function runRoofClipFrame() {
   const nodes = useScene.getState().nodes as Readonly<Record<string, AnyNode>>
   const patchesByBuilding = getRoofUndersidePatches(nodes)
-  if (patchesByBuilding.size === 0) return
   const elevations = getLevelElevations(nodes as Record<AnyNodeId, AnyNode>)
   const roofGroups = new Set<THREE.Object3D>()
   for (const id of sceneRegistry.byType.roof ?? []) {
@@ -251,7 +264,10 @@ export function runRoofClipFrame() {
     const level = elevations.get(levelId)
     if (!levelObject || !level) continue
     const patches = patchesByBuilding.get(level.buildingId)
-    if (!patches?.length) continue
+    if (!patches?.length) {
+      if (levelsWithClips.has(levelObject)) restoreLevelClips(levelObject)
+      continue
+    }
     const roofsKey = roofKeys.get(patches) ?? roofKeyOf(patches)
     roofKeys.set(patches, roofsKey)
     let buildingRegions: ClipRegion[] | null = null
@@ -309,6 +325,7 @@ export function runRoofClipFrame() {
         state.clipped.dispose()
       if (clipped) {
         mesh.geometry = clipped
+        levelsWithClips.add(levelObject)
       } else if (mesh.geometry !== source) {
         mesh.geometry = source
       }
