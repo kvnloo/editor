@@ -40,11 +40,7 @@ import {
   useMovingNode,
 } from '../../store/use-interaction-scope'
 import { createCameraDraggingLifecycle } from './camera-dragging-lifecycle'
-import {
-  type PendingFitScene,
-  planFitSceneOnEvent,
-  planFitSceneOnOrbitResume,
-} from './fit-scene-framing'
+import { createFitSceneControlsCoordinator } from './fit-scene-framing'
 
 const currentTarget = new Vector3()
 const tempBox = new Box3()
@@ -381,9 +377,24 @@ export const CustomCameraControls = ({ paused = false }: { paused?: boolean }) =
   )
   const currentLevelId = selection.levelId
   const firstLoad = useRef(true)
-  // Survives first-person (orbit unmounted) so scene-ready fit still applies
-  // once CameraControls remount.
-  const pendingFitSceneRef = useRef<PendingFitScene | null>(null)
+  const fitSceneCoordinator = useMemo(
+    () =>
+      createFitSceneControlsCoordinator({
+        getMode: () => {
+          const { isFirstPersonMode, isPreviewMode } = useEditor.getState()
+          return { isFirstPersonMode, isPreviewMode }
+        },
+      }),
+    [],
+  )
+  const setCameraControlsRef = useCallback(
+    (next: CameraControlsImpl | null) => {
+      controls.current = next
+      fitSceneCoordinator.attachControls(next)
+    },
+    [fitSceneCoordinator],
+  )
+  useEffect(() => () => fitSceneCoordinator.dispose(), [fitSceneCoordinator])
   const maxPolarAngle =
     !isPreviewMode && allowUndergroundCamera ? DEBUG_MAX_POLAR_ANGLE : DEFAULT_MAX_POLAR_ANGLE
 
@@ -1259,57 +1270,8 @@ export const CustomCameraControls = ({ paused = false }: { paused?: boolean }) =
       focusNode(nodeId)
     }
 
-    const applyFitLookAt = (lookAt: {
-      eyeX: number
-      eyeY: number
-      eyeZ: number
-      targetX: number
-      targetY: number
-      targetZ: number
-    }) => {
-      if (!controls.current) return false
-      controls.current.setLookAt(
-        lookAt.eyeX,
-        lookAt.eyeY,
-        lookAt.eyeZ,
-        lookAt.targetX,
-        lookAt.targetY,
-        lookAt.targetZ,
-        true,
-      )
-      return true
-    }
-
-    const flushPendingFitScene = () => {
-      const plan = planFitSceneOnOrbitResume({
-        isPreviewMode,
-        isFirstPersonMode: useEditor.getState().isFirstPersonMode,
-        hasControls: !!controls.current,
-        pending: pendingFitSceneRef.current,
-      })
-      if (plan.action !== 'apply') return
-      if (!applyFitLookAt(plan.lookAt)) return
-      pendingFitSceneRef.current = null
-    }
-
     const handleFitScene = ({ bounds }: CameraControlFitSceneEvent) => {
-      const plan = planFitSceneOnEvent({
-        isPreviewMode,
-        isFirstPersonMode,
-        hasControls: !!controls.current,
-        bounds: bounds ?? null,
-      })
-      if (plan.action === 'ignore') return
-      if (plan.action === 'queue') {
-        pendingFitSceneRef.current = plan.pending
-        // Orbit path with a not-yet-attached ref: retry next frame.
-        if (!isFirstPersonMode && !isPreviewMode) {
-          requestAnimationFrame(flushPendingFitScene)
-        }
-        return
-      }
-      pendingFitSceneRef.current = null
-      applyFitLookAt(plan.lookAt)
+      fitSceneCoordinator.onFitScene(bounds ?? null)
     }
 
     emitter.on('camera-controls:capture', handleNodeCapture)
@@ -1329,36 +1291,11 @@ export const CustomCameraControls = ({ paused = false }: { paused?: boolean }) =
       emitter.off('camera-controls:orbit-ccw', handleOrbitCCW)
       emitter.off('camera-controls:fit-scene', handleFitScene)
     }
-  }, [focusNode, isPreviewMode, isFirstPersonMode])
+  }, [focusNode, isPreviewMode, isFirstPersonMode, fitSceneCoordinator])
 
-  // Apply a fit that arrived while first-person (orbit unmounted). Wait one
-  // frame so CameraControls can remount and attach its ref.
   useEffect(() => {
-    if (isFirstPersonMode || isPreviewMode || !pendingFitSceneRef.current) return
-
-    const frame = requestAnimationFrame(() => {
-      const plan = planFitSceneOnOrbitResume({
-        isPreviewMode,
-        isFirstPersonMode: useEditor.getState().isFirstPersonMode,
-        hasControls: !!controls.current,
-        pending: pendingFitSceneRef.current,
-      })
-      if (plan.action !== 'apply' || !controls.current) return
-      pendingFitSceneRef.current = null
-      const { lookAt } = plan
-      controls.current.setLookAt(
-        lookAt.eyeX,
-        lookAt.eyeY,
-        lookAt.eyeZ,
-        lookAt.targetX,
-        lookAt.targetY,
-        lookAt.targetZ,
-        true,
-      )
-    })
-
-    return () => cancelAnimationFrame(frame)
-  }, [isFirstPersonMode, isPreviewMode])
+    if (!isFirstPersonMode && !isPreviewMode) fitSceneCoordinator.onOrbitResume()
+  }, [fitSceneCoordinator, isFirstPersonMode, isPreviewMode])
 
   const onTransitionStart = useCallback(() => {
     cameraDraggingLifecycle.begin()
@@ -1408,7 +1345,7 @@ export const CustomCameraControls = ({ paused = false }: { paused?: boolean }) =
       onRest={onRest}
       onSleep={onRest}
       onTransitionStart={onTransitionStart}
-      ref={controls}
+      ref={setCameraControlsRef}
       restThreshold={0.01}
       touches={touches}
     />

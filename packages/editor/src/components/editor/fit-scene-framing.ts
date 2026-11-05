@@ -92,3 +92,108 @@ export function planFitSceneOnOrbitResume(input: {
 
   return { action: 'apply', lookAt: computeFitSceneLookAt(input.pending.bounds) }
 }
+/**
+ * Keep the newest scene fit until the orbit camera-controls ref is attached.
+ * Ref attachment, not a one-shot frame, is the retry trigger. The frame
+ * deferral lets the first-person pose restore complete before fitting.
+ */
+export function createFitSceneControlsCoordinator({
+  getMode,
+  requestFrame = (callback) => requestAnimationFrame(callback),
+  cancelFrame = (frame) => cancelAnimationFrame(frame),
+}: {
+  getMode: () => { isPreviewMode: boolean; isFirstPersonMode: boolean }
+  requestFrame?: (callback: () => void) => number
+  cancelFrame?: (frame: number) => void
+}) {
+  type Controls = {
+    setLookAt: (
+      eyeX: number,
+      eyeY: number,
+      eyeZ: number,
+      targetX: number,
+      targetY: number,
+      targetZ: number,
+      enableTransition: boolean,
+    ) => unknown
+  }
+  let controls: Controls | null = null
+  let pending: PendingFitScene | null = null
+  let frame: number | null = null
+  let disposed = false
+
+  const cancelScheduledFrame = () => {
+    if (frame === null) return
+    cancelFrame(frame)
+    frame = null
+  }
+
+  const applyLookAt = (control: Controls, lookAt: FitSceneLookAt) => {
+    control.setLookAt(
+      lookAt.eyeX,
+      lookAt.eyeY,
+      lookAt.eyeZ,
+      lookAt.targetX,
+      lookAt.targetY,
+      lookAt.targetZ,
+      true,
+    )
+  }
+
+  const applyPending = () => {
+    if (disposed || !controls || !pending) return
+    const plan = planFitSceneOnOrbitResume({
+      ...getMode(),
+      hasControls: true,
+      pending,
+    })
+    if (plan.action !== 'apply') return
+    pending = null
+    applyLookAt(controls, plan.lookAt)
+  }
+
+  const schedule = () => {
+    if (disposed || !pending || frame !== null) return
+    frame = requestFrame(() => {
+      frame = null
+      applyPending()
+    })
+  }
+
+  const onFitScene = (bounds: FitSceneBounds) => {
+    if (disposed) return
+    const mode = getMode()
+    const plan = planFitSceneOnEvent({ ...mode, hasControls: !!controls, bounds })
+    if (plan.action === 'ignore') return
+    cancelScheduledFrame()
+    if (plan.action === 'queue') {
+      pending = plan.pending
+      if (!mode.isFirstPersonMode) schedule()
+      return
+    }
+    pending = null
+    if (controls) applyLookAt(controls, plan.lookAt)
+  }
+
+  const attachControls = (next: Controls | null) => {
+    if (disposed) return
+    controls = next
+    if (next) schedule()
+    else cancelScheduledFrame()
+  }
+
+  const onOrbitResume = () => {
+    cancelScheduledFrame()
+    const mode = getMode()
+    if (!mode.isFirstPersonMode && !mode.isPreviewMode) schedule()
+  }
+
+  const dispose = () => {
+    disposed = true
+    cancelScheduledFrame()
+    controls = null
+    pending = null
+  }
+
+  return { onFitScene, attachControls, onOrbitResume, dispose }
+}
