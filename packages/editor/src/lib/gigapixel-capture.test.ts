@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test'
-import { streamGigapixelCapture } from '@pascal-app/editor/gigapixel-capture'
 import {
   createInMemoryGigapixelArtifactSink,
   type GigapixelArtifactSink,
 } from '@pascal-app/editor/gigapixel-artifact-sink'
+import { streamGigapixelCapture } from '@pascal-app/editor/gigapixel-capture'
 import { deepZoomDescriptor, planGigapixelCapture } from '@pascal-app/viewer/capture'
 import { strFromU8, unzipSync } from 'fflate'
 

@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { streamDeepZoomZip, type DeepZoomZipTile } from '@pascal-app/editor/deep-zoom-zip'
+import { createInMemoryGigapixelArtifactSink } from '@pascal-app/editor/gigapixel-artifact-sink'
 import { deepZoomDescriptor } from '@pascal-app/viewer/capture'
 import { strFromU8, unzipSync } from 'fflate'
-import { createInMemoryGigapixelArtifactSink } from '@pascal-app/editor/gigapixel-artifact-sink'
 
 const descriptorOptions = {
   width: 2,

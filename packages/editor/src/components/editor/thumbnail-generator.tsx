@@ -43,8 +43,8 @@ import { useCallback, useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { CanvasTarget, ClippingGroup, type WebGPURenderer } from 'three/webgpu'
 import { EDITOR_LAYER } from '../../lib/constants'
-import { streamGigapixelCapture } from '../../lib/gigapixel-capture'
 import { createInMemoryGigapixelArtifactSink } from '../../lib/gigapixel-artifact-sink'
+import { streamGigapixelCapture } from '../../lib/gigapixel-capture'
 import {
   applySnapshotCapturePose,
   captureSnapshotScene,
