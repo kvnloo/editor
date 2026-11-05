@@ -6,6 +6,16 @@ export type SolarPosition = { azimuthDeg: number; elevationDeg: number }
 
 /** Sun angles at a UTC instant: azimuth clockwise from true north, geometric elevation above the horizon. */
 export function solarPosition(date: Date, latDeg: number, lonDeg: number): SolarPosition {
+  if (!Number.isFinite(date.getTime())) {
+    throw new RangeError('Solar position requires a valid Date')
+  }
+  if (!Number.isFinite(latDeg) || Math.abs(latDeg) > 90) {
+    throw new RangeError('Latitude must be finite and between -90 and 90 degrees')
+  }
+  if (!Number.isFinite(lonDeg) || Math.abs(lonDeg) > 180) {
+    throw new RangeError('Longitude must be finite and between -180 and 180 degrees')
+  }
+
   const year = date.getUTCFullYear()
   const yearStart = Date.UTC(year, 0, 1)
   const dayOfYear = Math.floor((date.getTime() - yearStart) / MS_PER_DAY) + 1

@@ -2,6 +2,56 @@ import { describe, expect, test } from 'bun:test'
 import { solarPosition, sunDirectionInPlan } from '../index'
 
 describe('solar position', () => {
+  test('rejects an invalid Date', () => {
+    expect(() => solarPosition(new Date(Number.NaN), 0, 0)).toThrow(RangeError)
+  })
+
+  test('rejects nonfinite latitudes', () => {
+    const instant = new Date('2026-06-21T17:00:00Z')
+    for (const latitude of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      expect(() => solarPosition(instant, latitude, 0)).toThrow(RangeError)
+    }
+  })
+
+  test('rejects out-of-range latitudes', () => {
+    const instant = new Date('2026-06-21T17:00:00Z')
+    for (const latitude of [-90.0001, 90.0001]) {
+      expect(() => solarPosition(instant, latitude, 0)).toThrow(RangeError)
+    }
+  })
+
+  test('rejects nonfinite longitudes', () => {
+    const instant = new Date('2026-06-21T17:00:00Z')
+    for (const longitude of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      expect(() => solarPosition(instant, 0, longitude)).toThrow(RangeError)
+    }
+  })
+
+  test('rejects out-of-range longitudes', () => {
+    const instant = new Date('2026-06-21T17:00:00Z')
+    for (const longitude of [-180.0001, 180.0001]) {
+      expect(() => solarPosition(instant, 0, longitude)).toThrow(RangeError)
+    }
+  })
+
+  test('accepts both poles with finite angles', () => {
+    const instant = new Date('2026-06-21T17:00:00Z')
+    for (const latitude of [-90, 90]) {
+      const sun = solarPosition(instant, latitude, 0)
+      expect(Number.isFinite(sun.azimuthDeg)).toBe(true)
+      expect(Number.isFinite(sun.elevationDeg)).toBe(true)
+    }
+  })
+
+  test('accepts both sides of the date line with finite angles', () => {
+    const instant = new Date('2026-06-21T17:00:00Z')
+    for (const longitude of [-180, 180]) {
+      const sun = solarPosition(instant, 0, longitude)
+      expect(Number.isFinite(sun.azimuthDeg)).toBe(true)
+      expect(Number.isFinite(sun.elevationDeg)).toBe(true)
+    }
+  })
+
   test('the equinox sun is within one degree of overhead at the equator around solar noon', () => {
     // 2026-03-20 12:07 UTC, latitude 0, longitude 0: NOAA-equation elevation ~89.46°.
     const sun = solarPosition(new Date('2026-03-20T12:07:00Z'), 0, 0)
