@@ -1240,7 +1240,7 @@ export function buildIfcExport(input: IfcExportInput): IfcExportResult {
   }
   const plateTopByZone = new Map<string, number>()
   for (const slab of ofType<SlabNode>('slab')) {
-    if (slab.recessed) continue
+    if (slab.recessed || isExcluded(slab)) continue
     for (const zoneId of slab.zoneIds ?? []) {
       const top = slab.elevation ?? 0
       plateTopByZone.set(zoneId, Math.max(top, plateTopByZone.get(zoneId) ?? -Infinity))
