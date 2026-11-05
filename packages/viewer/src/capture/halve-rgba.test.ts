@@ -82,4 +82,22 @@ describe('halveRgba', () => {
     expect(Array.from(data)).toEqual([13, 27, 39, 51])
     expect(data.length).toBe(width * height * 4)
   })
+  test('rejects zero and negative dimensions', () => {
+    expect(() => halveRgba(new Uint8ClampedArray(0), 0, 0)).toThrow(RangeError)
+    expect(() => halveRgba(new Uint8ClampedArray(0), 1, 0)).toThrow(RangeError)
+    expect(() => halveRgba(new Uint8ClampedArray(4), -1, 1)).toThrow(RangeError)
+    expect(() => halveRgba(new Uint8ClampedArray(4), 1, -1)).toThrow(RangeError)
+  })
+
+  test('rejects short and long packed RGBA buffers', () => {
+    expect(() => halveRgba(new Uint8ClampedArray(3), 1, 1)).toThrow(RangeError)
+    expect(() => halveRgba(new Uint8ClampedArray(5), 1, 1)).toThrow(RangeError)
+  })
+
+  test('rejects fractional or unsafe dimensions and unsafe byte lengths', () => {
+    const pixel = new Uint8ClampedArray(4)
+    expect(() => halveRgba(pixel, 1.5, 1)).toThrow(RangeError)
+    expect(() => halveRgba(pixel, Number.MAX_SAFE_INTEGER + 1, 1)).toThrow(RangeError)
+    expect(() => halveRgba(pixel, Number.MAX_SAFE_INTEGER, 1)).toThrow(RangeError)
+  })
 })

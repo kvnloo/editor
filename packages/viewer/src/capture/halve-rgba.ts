@@ -3,6 +3,18 @@ export function halveRgba(
   w: number,
   h: number,
 ): { data: Uint8ClampedArray; width: number; height: number } {
+  const byteLength = w * h * 4
+  if (
+    !Number.isSafeInteger(w) ||
+    w <= 0 ||
+    !Number.isSafeInteger(h) ||
+    h <= 0 ||
+    !Number.isSafeInteger(byteLength) ||
+    src.length !== byteLength
+  ) {
+    throw new RangeError('halveRgba requires positive safe dimensions and exactly w*h*4 bytes')
+  }
+
   const width = Math.ceil(w / 2)
   const height = Math.ceil(h / 2)
   const data = new Uint8ClampedArray(width * height * 4)
