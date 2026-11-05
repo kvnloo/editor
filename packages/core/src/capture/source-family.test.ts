@@ -35,6 +35,19 @@ describe('verifySourceFamily', () => {
     ).toBe('pass')
   })
 
+  test('missing derived sha256 is unknown despite matching ancestry', () => {
+    const missingDigest: CaptureArtifactReference = {
+      id: 'preview',
+      mediaType: 'image/webp',
+      metadata: { sourceMasterSha256: MASTER_SHA },
+    }
+    expect(verifySourceFamily(master, [missingDigest])).toBe('unknown')
+    expect(verifySourceFamily(master, [derived('pyramid', MASTER_SHA), missingDigest])).toBe(
+      'unknown',
+    )
+    expect(verifySourceFamily(master, [missingDigest, derived('tile', OTHER_SHA)])).toBe('fail')
+  })
+
   test('fails when any derived artifact names a different master', () => {
     expect(
       verifySourceFamily(master, [derived('preview', MASTER_SHA), derived('tile-0', OTHER_SHA)]),
@@ -89,8 +102,11 @@ describe('verifySourceFamily', () => {
         },
       },
     })
-    expect(v1.streams[0]?.artifact?.uri).toBe('https://example.com/room.usdz')
-    expect(v1.streams[0]?.artifact?.metadata).toBeUndefined()
+    const v1Artifact = v1.streams[0]?.artifact
+    expect(v1Artifact?.uri).toBe('https://example.com/room.usdz')
+    expect(v1Artifact?.metadata).toBeUndefined()
+    if (!v1Artifact) throw new Error('Expected the v1 room model artifact.')
+    expect(verifySourceFamily(master, [v1Artifact])).toBe('unknown')
 
     const v2 = normalizeCaptureSessionManifest({
       schemaVersion: 2,

@@ -2,7 +2,11 @@ import { type CaptureArtifactReference, CaptureArtifactReferenceSchema } from '.
 
 export type SourceFamilyVerdict = 'pass' | 'fail' | 'unknown'
 
-/** Checks declared digest ancestry, not the artifact bytes or the rendering process. */
+/**
+ * Checks declared digest ancestry, not artifact bytes or rendering.
+ * Missing a derived sha256 yields unknown, even when ancestry matches.
+ * An explicit ancestry mismatch still fails.
+ */
 export function verifySourceFamily(
   master: CaptureArtifactReference,
   derived: readonly CaptureArtifactReference[],
@@ -14,7 +18,11 @@ export function verifySourceFamily(
 
   for (const artifact of derived) {
     const reference = CaptureArtifactReferenceSchema.parse(artifact)
-    readDigest(reference.sha256, 'Derived artifact ' + reference.id + ' sha256')
+    const derivedDigest = readDigest(
+      reference.sha256,
+      'Derived artifact ' + reference.id + ' sha256',
+    )
+    if (derivedDigest === undefined) hasMissingEvidence = true
     const sourceDigest = readDigest(
       reference.metadata?.sourceMasterSha256,
       'Derived artifact ' + reference.id + ' metadata.sourceMasterSha256',
