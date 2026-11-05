@@ -54,7 +54,11 @@ function fakeRenderer(options: FakeOptions = {}) {
       expect([width, height]).toEqual([2, 2])
       events.push(`read:${currentKind}`)
       if (options.failOn === currentKind && options.failDuring === 'read') {
-        return Promise.reject(new Error('readPixels failed'))
+        const kind = currentKind
+        return Promise.resolve().then(() => {
+          events.push(`settle:${kind}`)
+          throw new Error('readPixels failed')
+        })
       }
       if (currentKind === 'baked' && options.changeBakedPixel) pixels[0] = 11
       return Promise.resolve(pixels)
@@ -112,6 +116,7 @@ describe('captureVisualReviewPair', () => {
     expect(receipt.mismatchRatio).toBeNull()
     expect(events).toContain('restore:baked')
     expect(events.indexOf('restore:baked')).toBeGreaterThan(events.indexOf('read:baked'))
+    expect(events.indexOf('restore:baked')).toBeLessThan(events.indexOf('settle:baked'))
   })
 
   test('restores the source scene after a synchronous renderer failure', async () => {
