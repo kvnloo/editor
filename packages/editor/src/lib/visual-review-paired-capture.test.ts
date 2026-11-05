@@ -130,7 +130,7 @@ describe('captureVisualReviewPair', () => {
     expect(events).toContain('restore:baked')
   })
 
-  test('copies reused pixel buffers so one baked pixel change remains a one-quarter mismatch', async () => {
+  test('copies reused buffers before comparing one changed pixel', async () => {
     const { renderer } = fakeRenderer({ changeBakedPixel: true })
     const paired = await captureVisualReviewPair(renderer, POSE, { width: 2, height: 2 })
     const receipt = compareVisualReviewCaptures(paired.source, paired.baked)
