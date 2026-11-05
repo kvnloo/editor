@@ -19,12 +19,12 @@ export interface DeepZoomZipTile {
 
 /**
  * Writes a DZI descriptor and encoded tile files into a streaming ZIP.
- * The sink must consume or copy each emitted chunk before returning.
+ * The sink must consume or copy each emitted chunk before resolving.
  */
 export async function streamDeepZoomZip(
   options: DeepZoomZipOptions,
   tiles: AsyncIterable<DeepZoomZipTile> | Iterable<DeepZoomZipTile>,
-  onChunk: (chunk: Uint8Array) => void,
+  onChunk: (chunk: Uint8Array) => void | Promise<void>,
 ): Promise<void> {
   const { name, format, width, height, tileSize } = options
   if (typeof name !== 'string' || !/^[\p{L}\p{N}_][\p{L}\p{N} ._-]*$/u.test(name)) {
@@ -36,18 +36,23 @@ export async function streamDeepZoomZip(
 
   const descriptor = deepZoomDescriptor(options)
   const maxLevel = deepZoomMaxLevel(width, height)
+  // fflate does not await its callback; serialize chunks before requesting another entry.
+  let drained: Promise<void> = Promise.resolve()
   const zip = new Zip((error, chunk) => {
-    if (error) throw error
-    onChunk(chunk)
+    drained = drained.then(() => {
+      if (error) throw error
+      return onChunk(chunk)
+    })
   })
 
-  function addEntry(path: string, bytes: Uint8Array): void {
+  async function addEntry(path: string, bytes: Uint8Array): Promise<void> {
     const entry = new ZipPassThrough(path)
     zip.add(entry)
     entry.push(bytes, true)
+    await drained
   }
 
-  addEntry(name + '.dzi', strToU8(descriptor))
+  await addEntry(name + '.dzi', strToU8(descriptor))
 
   for await (const tile of tiles) {
     if (!Number.isSafeInteger(tile.level) || tile.level < 0 || tile.level > maxLevel) {
@@ -68,11 +73,12 @@ export async function streamDeepZoomZip(
       throw new TypeError('tile bytes must be a Uint8Array')
     }
 
-    addEntry(
+    await addEntry(
       name + '_files/' + tile.level + '/' + tile.col + '_' + tile.row + '.' + format,
       tile.bytes,
     )
   }
 
   zip.end()
+  await drained
 }

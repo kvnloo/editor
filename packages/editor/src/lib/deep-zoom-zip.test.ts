@@ -68,6 +68,95 @@ describe('streamDeepZoomZip', () => {
     }
   })
 
+  test('waits for an async sink before requesting the next tile', async () => {
+    const events: string[] = []
+    const chunks: Uint8Array[] = []
+    let releaseSink!: () => void
+    const slowSink = new Promise<void>((resolve) => {
+      releaseSink = resolve
+    })
+    let sinkStarted!: () => void
+    const started = new Promise<void>((resolve) => {
+      sinkStarted = resolve
+    })
+    let emittedFirstTile = false
+    let blocked = false
+
+    async function* tileSource(): AsyncGenerator<DeepZoomZipTile> {
+      events.push('tile:0')
+      emittedFirstTile = true
+      yield pyramid[0]!
+      expect(events).toContain('sink:resumed')
+      events.push('tile:1')
+      yield pyramid[1]!
+    }
+
+    const write = streamDeepZoomZip(
+      { name: 'scan', ...descriptorOptions },
+      tileSource(),
+      async (chunk) => {
+        if (emittedFirstTile && !blocked) {
+          blocked = true
+          events.push('sink:waiting')
+          sinkStarted()
+          await slowSink
+          events.push('sink:resumed')
+        }
+        chunks.push(chunk.slice())
+      },
+    )
+
+    await started
+    const beforeRelease = [...events]
+    releaseSink()
+    await write
+    expect(beforeRelease).toEqual(['tile:0', 'sink:waiting'])
+    expect(events).toEqual(['tile:0', 'sink:waiting', 'sink:resumed', 'tile:1'])
+    expect(Object.keys(unzipSync(concatenate(chunks)))).toEqual([
+      'scan.dzi',
+      'scan_files/0/0_0.webp',
+      'scan_files/1/0_0.webp',
+    ])
+  })
+
+  test('keeps synchronous sink output byte-identical to an async sink', async () => {
+    const syncChunks: Uint8Array[] = []
+    const asyncChunks: Uint8Array[] = []
+
+    await Promise.all([
+      streamDeepZoomZip({ name: 'scan', ...descriptorOptions }, pyramid, (chunk) => {
+        syncChunks.push(chunk.slice())
+      }),
+      streamDeepZoomZip({ name: 'scan', ...descriptorOptions }, pyramid, async (chunk) => {
+        await Promise.resolve()
+        asyncChunks.push(chunk.slice())
+      }),
+    ])
+
+    expect(concatenate(syncChunks)).toEqual(concatenate(asyncChunks))
+  })
+
+  test('rejects a failing async sink before requesting another tile', async () => {
+    const events: string[] = []
+    let emittedFirstTile = false
+    const failure = new Error('sink could not persist ZIP chunk')
+
+    async function* tileSource(): AsyncGenerator<DeepZoomZipTile> {
+      events.push('tile:0')
+      emittedFirstTile = true
+      yield pyramid[0]!
+      events.push('tile:1')
+      yield pyramid[1]!
+    }
+
+    await expect(
+      streamDeepZoomZip({ name: 'scan', ...descriptorOptions }, tileSource(), () => {
+        if (emittedFirstTile) return Promise.reject(failure)
+      }),
+    ).rejects.toBe(failure)
+    expect(events).toEqual(['tile:0'])
+  })
+
   test('rejects unsafe paths and out-of-range tile coordinates', async () => {
     await expect(
       streamDeepZoomZip({ name: '../escape', ...descriptorOptions }, [], () => {}),
