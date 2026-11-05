@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
 import { Client } from '@modelcontextprotocol/client'
 import { InMemoryTransport, McpServer } from '@modelcontextprotocol/server'
-import type { AgentOperations } from '@pascal-app/core/agent-operations'
-import { type PluginAgentTools, refuse } from '@pascal-app/core/agent-tools'
+import { type AgentOperations, planPhotoElevation } from '@pascal-app/core/agent-operations'
+import { type PluginAgentTools, refuse, straightenFacadePhotoTool } from '@pascal-app/core/agent-tools'
 import { type AnyNodeId, BuildingNode, type Collection, LevelNode } from '@pascal-app/core/schema'
 import { createPascalMcpServer } from '@pascal-app/mcp/server'
 import { z } from 'zod'
@@ -11,7 +11,7 @@ import { CATALOG_BRIEF } from '../../../core/src/agent-operations/__fixtures__/d
 import { SceneBridge } from '../bridge/scene-bridge'
 import { createSceneOperations } from '../operations'
 import { registerAddColumn } from './add-column'
-import { ADDITIVE_TOOL_ANNOTATIONS } from './annotations'
+import { ADDITIVE_TOOL_ANNOTATIONS, READ_ONLY_TOOL_ANNOTATIONS } from './annotations'
 import { type AssetCatalog, builtInCatalog } from './asset-catalog'
 import { type PlanReadingHosts, registerOperationTool, registerSharedTools } from './shared-tools'
 
@@ -351,4 +351,107 @@ describe("a plugin's operation tools over MCP", () => {
     expect(result.isError).toBe(true)
     expect(levelName()).toBe('Ground')
   })
+})
+
+test('straighten_facade_photo advertises and enforces its output schema over MCP', async () => {
+  const building = BuildingNode.parse({ id: 'building_pose_mcp', children: ['level_pose_mcp'] })
+  const level = LevelNode.parse({
+    id: 'level_pose_mcp',
+    parentId: building.id,
+    level: 0,
+    height: 8,
+    children: ['wall_pose_mcp'],
+  })
+  const wall = WallNode.parse({
+    id: 'wall_pose_mcp',
+    parentId: level.id,
+    start: [0, 0],
+    end: [10, 0],
+    height: 8,
+  })
+  const nodes = Object.fromEntries([building, level, wall].map((node) => [node.id, node]))
+  const argumentsForPhoto = {
+    source: 'photo.png',
+    faces: [
+      {
+        wallIds: [wall.id],
+        edges: {
+          left: [[0.3, 0.2], [0.3, 0.6]],
+          right: [[0.7, 0.2], [0.7, 0.6]],
+        },
+        rows: [
+          { levelId: level.id, height: 0, points: [[0.3, 0.6], [0.7, 0.6]] },
+          { levelId: level.id, height: 4, points: [[0.3, 0.4], [0.7, 0.4]] },
+          { levelId: level.id, height: 8, points: [[0.3, 0.2], [0.7, 0.2]] },
+        ],
+      },
+    ],
+    reprojectionTolerancePx: 2,
+  }
+
+  async function connect(omitRms: boolean) {
+    const bridge = new SceneBridge()
+    bridge.setScene(nodes as never, [building.id] as never)
+    const server = new McpServer({ name: 'pose-output-contract', version: '0.0.0' })
+    registerOperationTool(server, createSceneOperations({ bridge }), {
+      contract: straightenFacadePhotoTool,
+      annotations: READ_ONLY_TOOL_ANNOTATIONS,
+      operation: (scene, input) => {
+        const result = planPhotoElevation(
+          scene,
+          input as Parameters<typeof planPhotoElevation>[1],
+          { width: 1000, height: 800 },
+        )
+        if (omitRms) {
+          if (!result.camera?.pose) throw new Error('Expected a solved pose in the test scene')
+          const malformed = structuredClone(result)
+          Reflect.deleteProperty(malformed.camera!.pose!.reprojection, 'rmsPx')
+          return { result: { ...malformed } }
+        }
+        return { result: { ...result } }
+      },
+    })
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair()
+    const client = new Client({ name: 'pose-output-client', version: '0.0.0' })
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)])
+    return { client, server }
+  }
+
+  const valid = await connect(false)
+  try {
+    const { tools } = await valid.client.listTools()
+    const registered = tools.find((tool) => tool.name === straightenFacadePhotoTool.name)
+    expect(registered?.outputSchema).toBeDefined()
+    expect(JSON.stringify(registered?.outputSchema)).toContain('"rmsPx"')
+
+    const result = await valid.client.callTool({
+      name: straightenFacadePhotoTool.name,
+      arguments: argumentsForPhoto,
+    })
+    expect(result.isError).toBeFalsy()
+    expect(result.structuredContent).toEqual(JSON.parse(result.content[0]!.text))
+    const pose = result.structuredContent as {
+      camera: { pose: { reprojection: { rmsPx: number; verdict: string } } }
+    }
+    expect(pose.camera.pose.reprojection.rmsPx).toBeCloseTo(0, 5)
+    expect(pose.camera.pose.reprojection.verdict).toBe('pass')
+  } finally {
+    await valid.client.close()
+    await valid.server.close()
+  }
+
+  const invalid = await connect(true)
+  try {
+    await invalid.client.listTools()
+    const result = await invalid.client.callTool({
+      name: straightenFacadePhotoTool.name,
+      arguments: argumentsForPhoto,
+    })
+    expect(result.isError).toBe(true)
+    expect(result.structuredContent).toBeUndefined()
+    expect(JSON.stringify(result.content)).toContain('rmsPx')
+  } finally {
+    await invalid.client.close()
+    await invalid.server.close()
+  }
 })

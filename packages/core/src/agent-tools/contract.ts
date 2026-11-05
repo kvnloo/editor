@@ -14,7 +14,7 @@ export type AgentToolAnnotations = {
 
 /**
  * One agent tool as every surface registers it: the name and description the agent reads, and its
- * input schema. Zod only, so it can be imported where the hosted chat declares its tools.
+ * input and optional output schemas. Zod only, so hosted chat can use the same contracts.
  */
 export type AgentToolContract<Input extends Record<string, z.ZodType> = Record<string, z.ZodType>> =
   {
@@ -22,6 +22,8 @@ export type AgentToolContract<Input extends Record<string, z.ZodType> = Record<s
     title: string
     description: string
     input: Input
+    /** The structured object returned on success; no schema means the legacy text-only contract. */
+    output?: z.ZodObject
     annotations?: AgentToolAnnotations
   }
 

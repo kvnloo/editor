@@ -4,6 +4,7 @@ import {
   type HostedServiceExecutor,
 } from '@pascal-app/core/agent-operations'
 import {
+  type AgentToolContract,
   HOSTED_SERVICE_TOOL_CONTRACTS,
   isAgentRefusal,
   refusalPayload,
@@ -15,12 +16,14 @@ export function registerHostedServiceTools(
   execute: HostedServiceExecutor,
 ): void {
   for (const contract of HOSTED_SERVICE_TOOL_CONTRACTS) {
+    const output = (contract as AgentToolContract).output
     server.registerTool(
       contract.name,
       {
         title: contract.title,
         description: contract.description,
         inputSchema: z.object(contract.input).strict(),
+        ...(output ? { outputSchema: output } : {}),
         annotations: contract.annotations,
       },
       async (input: Record<string, unknown>, ctx) => {
@@ -36,12 +39,16 @@ export function registerHostedServiceTools(
           const picture =
             typeof preview === 'string' ? /^data:(image\/[a-z]+);base64,(.+)$/.exec(preview) : null
           if (!picture)
-            return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] }
+            return {
+              content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+              ...(output ? { structuredContent: result as Record<string, unknown> } : {}),
+            }
           return {
             content: [
               { type: 'text' as const, text: JSON.stringify(rest) },
               { type: 'image' as const, data: picture[2]!, mimeType: picture[1]! },
             ],
+            ...(output ? { structuredContent: rest } : {}),
           }
         } catch (error) {
           const result = isAgentRefusal(error)
