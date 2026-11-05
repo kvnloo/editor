@@ -3,7 +3,7 @@ import {
   compareVisualReviewCaptures,
   type VisualReviewCameraPose,
   type VisualReviewCapture,
-} from './visual-review-receipt'
+} from '@pascal-app/editor'
 
 const POSE: VisualReviewCameraPose = {
   position: [0, 0, 5],

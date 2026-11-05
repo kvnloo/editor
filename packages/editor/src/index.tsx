@@ -948,6 +948,12 @@ export { useLinearDisplay } from './lib/use-linear-display'
 // dependency.
 export { cn } from './lib/utils'
 export {
+  compareVisualReviewCaptures,
+  type VisualReviewCameraPose,
+  type VisualReviewCapture,
+  type VisualReviewReceipt,
+} from './lib/visual-review-receipt'
+export {
   applyViewerClick,
   applyViewerHover,
   framedLookAt,
