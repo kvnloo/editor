@@ -51,6 +51,7 @@ function preparePage({ sourceUrl, finalStepIndex }) {
     bridge,
     viewer,
     images,
+    initialDrawerType: viewer.drawer?.getType?.() ?? null,
     finalStepIndex,
     nextIndex: 0,
     firstAppliedAt: null,
@@ -72,9 +73,16 @@ function preparePage({ sourceUrl, finalStepIndex }) {
     checkSharp()
   }
   const onFullyLoaded = (event) => {
-    if (state.finalAppliedAt === null || event.fullyLoaded !== true) return
-    state.fullAt = window.performance.now()
-    checkSharp()
+    if (state.finalAppliedAt === null) return
+    if (event.fullyLoaded === false) {
+      state.fullAt = null
+      state.sharpAt = null
+      return
+    }
+    if (event.fullyLoaded === true) {
+      state.fullAt = window.performance.now()
+      checkSharp()
+    }
   }
   viewer.addHandler('tile-loaded', onTile)
   for (const image of images) image.addHandler('fully-loaded-change', onFullyLoaded)
@@ -121,7 +129,8 @@ function finishPage() {
   const state = window.__deepzoomAbabCollector
   if (!state) throw new Error('ABAB viewer observation was not installed')
 
-  const drawerType = state.viewer.drawer?.getType?.()
+  const observedDrawerType = state.viewer.drawer?.getType?.()
+  const drawerType = observedDrawerType === state.initialDrawerType ? observedDrawerType : null
   const backend =
     drawerType === 'canvas'
       ? 'canvas2d'
@@ -208,7 +217,10 @@ export async function collectDeepzoomAbab({
   ) {
     throw new TypeError('sourceUrl must be an absolute HTTP(S) DZI URL')
   }
-  if (!viewerUrls || !['A', 'B'].every((arm) => typeof viewerUrls[arm] === 'string' && viewerUrls[arm])) {
+  if (
+    !viewerUrls ||
+    !['A', 'B'].every((arm) => typeof viewerUrls[arm] === 'string' && viewerUrls[arm])
+  ) {
     throw new TypeError('viewerUrls must provide A and B harness pages')
   }
 
