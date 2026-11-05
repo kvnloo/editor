@@ -9,6 +9,25 @@ const point = z
   .describe('A point of the photo as [across, down], fractions of its width and height (0 to 1).')
 const segment = z.array(point).length(2)
 
+const photoPixel = z.array(z.number().finite()).length(2)
+const reprojectionOutput = z.looseObject({
+  correspondences: z.array(
+    z.looseObject({
+      face: z.string(),
+      kind: z.enum(['row_corner', 'known_point']),
+      observedPx: photoPixel,
+      projectedPx: photoPixel.nullable(),
+      errorPx: z.number().finite().nullable(),
+    }),
+  ),
+  rmsPx: z.number().finite().nullable(),
+  tolerancePx: z.number().nonnegative().finite().nullable(),
+  verdict: z.enum(['pass', 'fail', 'unknown']),
+  reason: z
+    .enum(['insufficient_correspondences', 'invalid_projection', 'tolerance_not_provided'])
+    .optional(),
+})
+
 export const straightenFacadePhotoTool = {
   name: 'straighten_facade_photo',
   title: 'Straighten a facade photo',
@@ -102,4 +121,17 @@ export const straightenFacadePhotoTool = {
         "Vertical lines on the building besides the face edges (pier sides, window jambs, another corner), two points far apart on each. They give the camera's tilt and roll more surely than the face edges alone.",
       ),
   },
+  output: z.looseObject({
+    faces: z.array(z.looseObject({ residualPx: z.number().finite() })),
+    camera: z
+      .looseObject({
+        pose: z
+          .looseObject({
+            edgeResidualPx: z.number().finite(),
+            reprojection: reprojectionOutput,
+          })
+          .nullable(),
+      })
+      .nullable(),
+  }),
 }

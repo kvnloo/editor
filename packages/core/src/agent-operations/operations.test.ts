@@ -452,3 +452,97 @@ test('straighten facade photo reports the solved pose residual without requiring
     reason: 'tolerance_not_provided',
   })
 })
+
+test('straighten facade output schema preserves and requires pose residuals', () => {
+  const building = BuildingNode.parse({
+    id: 'building_pose_contract',
+    children: ['level_pose_contract'],
+  })
+  const level = LevelNode.parse({
+    id: 'level_pose_contract',
+    parentId: building.id,
+    level: 0,
+    height: 8,
+    children: ['wall_pose_contract'],
+  })
+  const wall = WallNode.parse({
+    id: 'wall_pose_contract',
+    parentId: level.id,
+    start: [0, 0],
+    end: [10, 0],
+    height: 8,
+  })
+  const nodes = Object.fromEntries([building, level, wall].map((node) => [node.id, node]))
+  const result = planPhotoElevation(
+    nodes,
+    {
+      faces: [
+        {
+          wallIds: [wall.id],
+          edges: {
+            left: [
+              [0.3, 0.2],
+              [0.3, 0.6],
+            ],
+            right: [
+              [0.7, 0.2],
+              [0.7, 0.6],
+            ],
+          },
+          rows: [
+            {
+              levelId: level.id,
+              height: 0,
+              points: [
+                [0.3, 0.6],
+                [0.7, 0.6],
+              ],
+            },
+            {
+              levelId: level.id,
+              height: 4,
+              points: [
+                [0.3, 0.4],
+                [0.7, 0.4],
+              ],
+            },
+            {
+              levelId: level.id,
+              height: 8,
+              points: [
+                [0.3, 0.2],
+                [0.7, 0.2],
+              ],
+            },
+          ],
+        },
+      ],
+      reprojectionTolerancePx: 2,
+    },
+    { width: 1000, height: 800 },
+  )
+  const schema = straightenFacadePhotoTool.output
+  const parsed = schema.parse(result)
+  expect(parsed).toEqual(result)
+  expect(parsed.faces[0]?.residualPx).toEqual(expect.any(Number))
+  expect(parsed.camera?.pose?.edgeResidualPx).toEqual(expect.any(Number))
+  expect(parsed.camera?.pose?.reprojection.correspondences).toHaveLength(6)
+  expect(parsed.camera?.pose?.reprojection.rmsPx).toBeCloseTo(0, 5)
+  expect(parsed.camera?.pose?.reprojection).toMatchObject({
+    tolerancePx: 2,
+    verdict: 'pass',
+  })
+
+  for (const remove of [
+    (value: typeof result) => Reflect.deleteProperty(value.faces[0]!, 'residualPx'),
+    (value: typeof result) => Reflect.deleteProperty(value.camera!.pose!, 'edgeResidualPx'),
+    (value: typeof result) => Reflect.deleteProperty(value.camera!.pose!, 'reprojection'),
+    (value: typeof result) => Reflect.deleteProperty(value.camera!.pose!.reprojection, 'rmsPx'),
+    (value: typeof result) =>
+      Reflect.deleteProperty(value.camera!.pose!.reprojection.correspondences[0]!, 'errorPx'),
+  ]) {
+    const missing = structuredClone(result)
+    remove(missing)
+    expect(schema.safeParse(missing).success).toBe(false)
+  }
+})
