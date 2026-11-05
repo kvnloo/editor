@@ -19,8 +19,10 @@ import {
   WallNode,
 } from '@pascal-app/core'
 import { evaluateRecipe, ProceduralItemNode, parseRecipe } from '@pascal-app/core/procedural-items'
+import { exportSceneToGlb, type GlbExportOptions } from '@pascal-app/editor'
 import {
   buildDoorPreviewMesh,
+  GRID_LAYER,
   markViewerPresentationTextureBorrowed,
   type ViewerPresentationContribution,
   viewerPresentationRegistry,
@@ -36,7 +38,6 @@ import cabinetJson from '../../../core/src/procedural-items/__fixtures__/cabinet
 import ceilingFanJson from '../../../core/src/procedural-items/__fixtures__/ceiling_fan.json'
 import pendantJson from '../../../core/src/procedural-items/__fixtures__/pendant_lamp.json'
 import {
-  exportSceneToGlb,
   prepareSceneForExport,
   prepareSceneForExportAsync,
   writeTextureReferenceExtras,
@@ -1126,7 +1127,11 @@ describe('prepareSceneForExport', () => {
     )
     itemMesh.userData.rendererCache = { frame: 5 }
     item.add(itemMesh)
-    root.add(wall, item)
+    // The live editor grid is a renderer-only sibling on GRID_LAYER (components/editor/grid.tsx).
+    const grid = new THREE.GridHelper(4, 4)
+    grid.name = 'pascal-editor-grid-input'
+    grid.layers.set(GRID_LAYER)
+    root.add(wall, item, grid)
     sceneRegistry.nodes.set(wallNode.id, wall)
     sceneRegistry.nodes.set(itemNode.id, item)
 
@@ -1143,12 +1148,17 @@ describe('prepareSceneForExport', () => {
       }
     }
     globalThis.FileReader = ExportFileReader as unknown as typeof FileReader
+    const options = { onlyVisible: true } satisfies GlbExportOptions
     let bytes: ArrayBuffer
     try {
-      bytes = await exportSceneToGlb(root, {
-        [wallNode.id]: wallNode,
-        [itemNode.id]: itemNode,
-      })
+      bytes = await exportSceneToGlb(
+        root,
+        {
+          [wallNode.id]: wallNode,
+          [itemNode.id]: itemNode,
+        },
+        options,
+      )
     } finally {
       globalThis.FileReader = originalFileReader
     }
@@ -1163,10 +1173,15 @@ describe('prepareSceneForExport', () => {
     const gltf = JSON.parse(
       new TextDecoder().decode(new Uint8Array(bytes, 20, jsonLength)),
     ) as {
-      nodes: Array<{ extras?: Record<string, unknown> }>
-      meshes?: unknown[]
+      nodes: Array<{ name?: string; extras?: Record<string, unknown> }>
+      meshes?: Array<{ name?: string; primitives: Array<{ mode?: number }> }>
     }
     expect(gltf.meshes).toHaveLength(2)
+    expect(gltf.nodes.some((node) => node.name === grid.name)).toBe(false)
+    expect(gltf.meshes?.some((mesh) => mesh.name === grid.name)).toBe(false)
+    expect(
+      gltf.meshes?.some((mesh) => mesh.primitives.some((primitive) => primitive.mode === 1)),
+    ).toBe(false)
     for (const [id, kind] of [
       [wallNode.id, 'wall'],
       [itemNode.id, 'item'],
