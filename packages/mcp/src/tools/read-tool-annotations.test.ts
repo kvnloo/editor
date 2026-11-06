@@ -49,7 +49,7 @@ const TOOL_POLICIES = [
       idempotentHint: true,
       openWorldHint: true,
     },
-    tools: ['analyze_floorplan_image', 'analyze_room_photo'],
+    tools: ['analyze_floorplan_image', 'analyze_room_photo', 'get_capture_evidence'],
   },
   {
     annotations: {

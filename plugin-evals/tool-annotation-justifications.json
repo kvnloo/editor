@@ -514,6 +514,19 @@
       }
     },
     {
+      "name": "get_capture_evidence",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": true
+      },
+      "justifications": {
+        "readOnlyHint": "It inspects a scan node and its capture artifacts without changing scene or project state.",
+        "destructiveHint": "It does not create, update, replace, delete, load, or save Pascal scene or project state.",
+        "openWorldHint": "It may resolve externally hosted capture manifests and fetch artifact bytes for SHA-256 checks."
+      }
+    },
+    {
       "name": "get_level_summary",
       "annotations": {
         "readOnlyHint": true,

@@ -58,6 +58,7 @@ export const EXPECTED_OPENAI_TOOL_ANNOTATIONS = {
   export_json: policy(true, false, false),
   furnish_room: policy(false, false, false),
   generate_variants: policy(false, false, false),
+  get_capture_evidence: policy(true, false, true),
   get_level_summary: policy(true, false, false),
   get_node: policy(true, false, false),
   get_project_status: policy(false, true, false),

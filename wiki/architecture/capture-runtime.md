@@ -20,6 +20,12 @@ scene graph.
   enter scene JSON.
 - A host owns source resolution, access control, signed URLs, persistence, retention, collaboration,
   and transport selection. Community's resolver uses its authenticated capture manifest route.
+- The MCP `get_capture_evidence` tool does not follow arbitrary scene-declared HTTP URLs by
+  default. A host must supply its capture source resolver (and its policy-checked artifact fetch)
+  or list explicit HTTPS origins. The fallback rejects local/file/IP-literal targets and
+  cross-origin redirects; manifests are capped at 1 MiB and artifact hashes at 64 MiB by default.
+  Host fetch adapters are trusted to enforce their own access control. DNS/private-address
+  resolution remains the responsibility of hosts that permit external domains.
 
 ## Static and live use the same source
 
@@ -45,6 +51,15 @@ mesh can be another artifact-backed stream without changing `ScanNode`. Unknown 
 available to hosts, which can add a renderer keyed by role or kind without changing the scene
 schema. A splat adapter should remain a separate composited renderer while still consuming the same
 source and visibility contract.
+
+## Read-only agent evidence
+
+The MCP `get_capture_evidence` tool reads a scan node's `captureSession` through the existing
+`CaptureSource.describe()` interface and checks artifact availability and declared SHA-256 byte
+digests. Unresolved artifacts, inline-only streams, failed fetches, and absent checksums are
+reported as unknown; mismatched bytes are failures. A matching digest is only byte integrity,
+not producer authentication: provenance and the overall verdict remain unknown unless a check
+fails. No artifact inventory is stored in the scene graph.
 
 ## Compatibility
 
