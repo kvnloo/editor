@@ -125,6 +125,8 @@ export {
   skyPhase,
   solarClockInstant,
   solarClockMinutes,
+  type SolarLight,
+  solarLight,
   solarPosition,
   sunEvents,
   type TimeOfDay,

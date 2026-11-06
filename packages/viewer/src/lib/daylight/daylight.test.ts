@@ -1,7 +1,8 @@
 // @ts-expect-error — Bun types are not part of the viewer's production declaration build.
 import { describe, expect, test } from 'bun:test'
+import { SiteNode } from '@pascal-app/core'
+import { presetInstant, solarLight, solarPosition } from '@pascal-app/viewer'
 import { resolveLocation, siteLocation, timezoneLocation } from './location'
-import { presetInstant, solarLight, solarPosition } from './solar'
 
 const PARIS = { lat: 48.86, lng: 2.35 }
 const JUNE = new Date(Date.UTC(2026, 5, 21))
@@ -44,6 +45,30 @@ describe('solar position', () => {
     const turned = solarLight(noon, PARIS.lat, PARIS.lng, Math.PI / 2)
     expect(turned.direction.x).toBeLessThan(-0.4)
     expect(plain.night).toBe(0)
+  })
+
+  test('published solar light honors persisted site north rotation', () => {
+    const noon = presetInstant(JUNE, PARIS.lat, PARIS.lng, 'midday')
+    const lightForSite = (northRotation?: number) => {
+      const site = SiteNode.parse({ northRotation })
+      const restored = SiteNode.parse(JSON.parse(JSON.stringify(site)))
+      expect(restored.northRotation).toBe(northRotation)
+      return solarLight(noon, PARIS.lat, PARIS.lng, restored.northRotation ?? 0)
+    }
+
+    const zero = lightForSite(0)
+    const thirty = lightForSite(Math.PI / 6)
+    const ninety = lightForSite(Math.PI / 2)
+    const legacy = lightForSite()
+    expect(legacy.direction.toArray()).toEqual(zero.direction.toArray())
+
+    const cos30 = Math.sqrt(3) / 2
+    expect(thirty.direction.x).toBeCloseTo(zero.direction.x * cos30 - zero.direction.z / 2, 10)
+    expect(thirty.direction.z).toBeCloseTo(zero.direction.x / 2 + zero.direction.z * cos30, 10)
+    expect(ninety.direction.x).toBeCloseTo(-zero.direction.z, 10)
+    expect(ninety.direction.z).toBeCloseTo(zero.direction.x, 10)
+    expect(thirty.direction.y).toBeCloseTo(zero.direction.y, 10)
+    expect(ninety.direction.y).toBeCloseTo(zero.direction.y, 10)
   })
 
   test('the sun warms and fades towards the horizon', () => {
