@@ -1232,7 +1232,7 @@ export function buildIfcExport(input: IfcExportInput): IfcExportResult {
   }
 
   // ── Spaces (rooms) ───────────────────────────────────────────────────
-  const ceilings = ofType<CeilingNode>('ceiling')
+  const ceilings = ofType<CeilingNode>('ceiling').filter((ceiling) => !isExcluded(ceiling))
   const ceilingByZone = new Map<string, CeilingNode>()
   for (const ceiling of ceilings) {
     if (ceiling.zoneId && !ceilingByZone.has(ceiling.zoneId))
@@ -1292,7 +1292,6 @@ export function buildIfcExport(input: IfcExportInput): IfcExportResult {
 
   // ── Ceilings ─────────────────────────────────────────────────────────
   for (const ceiling of ceilings) {
-    if (isExcluded(ceiling)) continue
     handled.add(ceiling.id)
     const context = contextFor(ceiling)
     const regions = areaRegions(ceiling.polygon, ceiling.holes ?? [])
