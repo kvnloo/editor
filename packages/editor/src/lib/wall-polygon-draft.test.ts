@@ -16,12 +16,12 @@ import {
   discardWallPolygonDraft,
   resolveWallDraftClickPoint,
   startWallPolygonDraft,
+  useEditor,
   useFloorplanDraftPreview,
   useWallDraftTyping,
   wallPolygonDraftWalls,
 } from '@pascal-app/editor'
 import { useViewer } from '@pascal-app/viewer'
-import useEditor from '../store/use-editor'
 import { runUndo } from './history'
 import { sfxEmitter } from './sfx-bus'
 import { isWallPolygonDraftOpen } from './wall-polygon-draft'
@@ -270,6 +270,84 @@ describe('Polygon room draft', () => {
     } finally {
       emitter.off('tool:cancel', onCancel)
       useEditor.getState().setViewMode(view)
+    }
+  })
+
+  test('switching between 2D, 3D and split releases typed polygon ownership once', () => {
+    const originalView = useEditor.getState().viewMode
+    const switches = [
+      ['3d', '2d'],
+      ['2d', 'split'],
+      ['split', '3d'],
+      ['3d', 'split'],
+      ['split', '2d'],
+      ['2d', '3d'],
+    ] as const
+    let cancels = 0
+    const onCancel = () => {
+      cancels += 1
+      // Tool cancellation must see an empty buffer, not stage-one Escape.
+      expect(useWallDraftTyping.getState().input).toBe('')
+      expect(useWallDraftTyping.getState().projectedEnd).toBeNull()
+    }
+    emitter.on('tool:cancel', onCancel)
+    try {
+      for (const [from, to] of switches) {
+        useEditor.getState().setViewMode(from)
+        startWallPolygonDraft(levelId, [0, 0])
+        expect(addWallPolygonDraftCorner([4, 0])).toBe('open')
+        const typing = useWallDraftTyping.getState()
+        typing.append('1')
+        typing.append('2')
+        typing.setProjectedEnd([1, 0])
+        let typingResets = 0
+        const unsubscribe = useWallDraftTyping.subscribe((state, previous) => {
+          if (state.input !== previous.input || state.projectedEnd !== previous.projectedEnd) {
+            typingResets += 1
+          }
+        })
+        const before = cancels
+        try {
+          useEditor.getState().setViewMode(to)
+          useEditor.getState().setViewMode(to)
+          // Both view adapters may also try to clear the same shared buffer.
+          typing.clearInput()
+          expect(cancels).toBe(before + 1)
+          expect(typingResets).toBe(1)
+          expect(wallPolygonDraftWalls()).toEqual([])
+          expect(addWallPolygonDraftCorner([8, 0])).toBe('ended')
+
+          startWallPolygonDraft(levelId, [10, 0])
+          const nextClick = resolveWallDraftClickPoint({
+            start: [10, 0],
+            currentEnd: [11, 0],
+            rawPoint: [13, 0],
+            input: useWallDraftTyping.getState().input,
+            projectedEnd: useWallDraftTyping.getState().projectedEnd,
+            options: { bareUnit: 'm', system: 'metric' },
+          })
+          expect(nextClick).toEqual([13, 0])
+          if (!nextClick) throw new Error('Expected an untyped next-view click')
+          expect(addWallPolygonDraftCorner(nextClick)).toBe('open')
+          expect(wallPolygonDraftWalls().map(({ start, end }) => ({ start, end }))).toEqual([
+            { start: [10, 0], end: [13, 0] },
+          ])
+          expect(typingResets).toBe(1)
+        } finally {
+          unsubscribe()
+          discardWallPolygonDraft()
+        }
+      }
+      expect({ sceneWrites, commits, ...history() }).toEqual({
+        sceneWrites: 0,
+        commits: 0,
+        past: 0,
+        future: 0,
+      })
+    } finally {
+      emitter.off('tool:cancel', onCancel)
+      discardWallPolygonDraft()
+      useEditor.getState().setViewMode(originalView)
     }
   })
 

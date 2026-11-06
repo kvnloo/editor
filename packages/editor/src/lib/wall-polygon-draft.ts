@@ -90,6 +90,9 @@ export function discardWallPolygonDraft(): void {
   const current = draft
   draft = null
   current?.stopGuards()
+  // Clear before the view-switch guard emits tool:cancel, so the tool exits
+  // its draft rather than treating the event as typing Escape stage 1.
+  if (current) useWallDraftTyping.getState().clearInput()
   if (points().length) setPoints([])
 }
 

@@ -32,7 +32,10 @@ export const useWallDraftTyping = create<WallDraftTypingState>((set) => ({
   append: (key) => set((state) => ({ input: state.input + key })),
   backspace: () =>
     set((state) => ({ input: state.input.slice(0, Math.max(0, state.input.length - 1)) })),
-  clearInput: () => set({ input: '', projectedEnd: null }),
+  clearInput: () =>
+    set((state) =>
+      state.input || state.projectedEnd ? { input: '', projectedEnd: null } : state,
+    ),
   setProjectedEnd: (end) => set({ projectedEnd: end }),
 }))
 
