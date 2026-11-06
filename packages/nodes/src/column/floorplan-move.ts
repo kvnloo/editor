@@ -5,6 +5,7 @@ import {
   collectAlignmentAnchors,
   type FloorplanMoveTarget,
   type FloorplanMoveTargetSession,
+  isMovable,
   movingFootprintAnchors,
   sceneRegistry,
   useLiveTransforms,
@@ -35,6 +36,9 @@ import {
  */
 
 export const columnFloorplanMoveTarget: FloorplanMoveTarget<ColumnNode> = ({ node, nodes }) => {
+  if (!isMovable(node)) {
+    return { affectedIds: [], apply() {}, canCommit: () => false, commit() {} }
+  }
   const columnId = node.id as AnyNodeId
   const originalPosition: [number, number, number] = [...node.position] as [number, number, number]
   const rotationY = node.rotation ?? 0

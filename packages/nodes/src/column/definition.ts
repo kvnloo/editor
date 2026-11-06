@@ -401,6 +401,9 @@ export const columnDefinition: NodeDefinition<typeof ColumnNode> = {
     // mode-driven snapping the overhaul standardised). 2D move keeps using
     // `floorplanMoveTarget`, which wins the 2D move dispatch.
     movable: {
+      // Lean-to owns post translation; null would fall back to the X/Z base.
+      override: ({ node }) =>
+        isLeanToManagedColumn(node as ColumnNodeType) ? { axes: [] } : null,
       axes: ['x', 'z'],
       gridSnap: true,
       groupMoveSnapPose: resolveColumnStructuralGridMoveSnap,
