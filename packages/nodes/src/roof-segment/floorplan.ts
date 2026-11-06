@@ -78,7 +78,11 @@ export function buildRoofSegmentFloorplan(
     [halfWidth, halfDepth],
     [-halfWidth, halfDepth],
   ]
-  const points: FloorplanPoint[] = corners.map(([x, y]) => toPlan(x, y))
+  const hasOutline =
+    (node.footprint?.length ?? 0) >= 3 || (node.coverFootprint?.length ?? 0) >= 3
+  const points: FloorplanPoint[] = (hasOutline ? getRoofSegmentCoverOutline(node) : corners).map(
+    ([x, z]) => toPlan(x, z),
+  )
 
   const view = ctx.viewState
   const palette = view?.palette
@@ -116,12 +120,12 @@ export function buildRoofSegmentFloorplan(
         }
   const children: FloorplanGeometry[] = [
     // Invisible hit-target — full footprint, transparent fill, captures
-    // clicks across the entire roof rectangle (so the user doesn't need
-    // to pixel-hunt the outline strokes).
+    // clicks across the actual covering (including a canopy), not an
+    // empty corner outside an outlined roof.
     footprint,
   ]
 
-  // The segment's own rectangle outline + fill render ONLY while it's
+  // The segment's own covering outline + fill render ONLY while it's
   // selected / highlighted — that highlights which sub-plane is active
   // (including its interior edges shared with neighbours). When unselected
   // the eaves come from the parent roof's merged outline

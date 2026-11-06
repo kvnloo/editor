@@ -304,6 +304,7 @@ export {
   getRoofRingEdgeNormal,
   getRoofSegmentCoverOutline,
   getRoofSegmentWallOutline,
+  offsetPlanRing,
   pullRoofSegmentCoverEdge,
 } from './nodes/roof-segment-canopy'
 export type {

@@ -4,10 +4,12 @@ import {
   type AnyNodeId,
   type FloorplanGeometry,
   type GeometryContext,
+  pointInPolygon2D,
   RoofNode,
   RoofSegmentNode,
 } from '@pascal-app/core'
 import { createFloorplanContextExtensions } from '@pascal-app/editor'
+import { roofDefinition, roofSegmentDefinition } from '@pascal-app/nodes'
 import { buildRoofFloorplan } from './floorplan'
 
 function buildContext(
@@ -248,5 +250,126 @@ describe('roof plan slope annotation', () => {
   test('a flat roof is not annotated with a pitch it does not have', () => {
     const geometry = cottageRoof({ roofType: 'flat', pitch: 0 })
     expect(labels(geometry).filter((label) => /:12$/.test(label.text))).toHaveLength(0)
+  })
+})
+
+/** Published node definitions must describe the same persisted roof in plan and selection. */
+function publishedOutlinePlan(
+  footprint: [number, number][] | undefined,
+  rotation: number,
+  options: {
+    coverFootprint?: [number, number][]
+    overhang?: number
+    pitch?: number
+  } = {},
+) {
+  const segment = RoofSegmentNode.parse({
+    id: 'rseg_outline',
+    type: 'roof-segment',
+    parentId: 'roof_outline',
+    roofType: 'gable',
+    width: 12,
+    depth: 8,
+    pitch: options.pitch ?? 40,
+    overhang: options.overhang ?? 0,
+    wallThickness: 0,
+    shingleThickness: 0,
+    ...(footprint ? { footprint } : {}),
+    ...(options.coverFootprint ? { coverFootprint: options.coverFootprint } : {}),
+  })
+  const roof = RoofNode.parse({
+    id: 'roof_outline',
+    type: 'roof',
+    rotation,
+    children: [segment.id],
+  })
+  const context: GeometryContext = {
+    resolve: () => undefined,
+    children: [segment],
+    siblings: [],
+    parent: null,
+    extensions: createFloorplanContextExtensions({ drafting: true }),
+  }
+  const roofPlan = roofDefinition.floorplan?.(roof, context) ?? null
+  const segmentPlan =
+    roofSegmentDefinition.floorplan?.(segment, { ...context, children: [], parent: roof }) ?? null
+  if (segmentPlan?.kind !== 'group') throw new Error('Expected segment plan group')
+  const click = segmentPlan.children.find(
+    (child) => child.kind === 'polygon' && child.pointerEvents === 'all',
+  )
+  if (click?.kind !== 'polygon') throw new Error('Expected polygon click target')
+  return {
+    wall: outlinePoints(roofPlan),
+    eave: eavePoints(roofPlan),
+    hit: click.points as [number, number][],
+  }
+}
+
+function planArea(points: readonly (readonly [number, number])[]): number {
+  return (
+    Math.abs(
+      points.reduce((sum, [x, z], index) => {
+        const [nextX, nextZ] = points[(index + 1) % points.length]!
+        return sum + x * nextZ - nextX * z
+      }, 0),
+    ) / 2
+  )
+}
+
+const outlineRectangle: [number, number][] = [
+  [-6, -4],
+  [6, -4],
+  [6, 4],
+  [-6, 4],
+]
+const outlineNotchedL: [number, number][] = [
+  [-6, -4],
+  [6, -4],
+  [6, 0],
+  [0, 0],
+  [0, 4],
+  [-6, 4],
+]
+
+describe('roof outline plan and hit geometry through published definitions', () => {
+  test.each([
+    { name: 'legacy rectangle', footprint: undefined, rotation: 0, area: 96 },
+    { name: 'explicit rectangle', footprint: outlineRectangle, rotation: 0, area: 96 },
+    { name: 'L with 6 by 4 notch', footprint: outlineNotchedL, rotation: 0, area: 72 },
+    { name: 'L turned 90 degrees', footprint: outlineNotchedL, rotation: Math.PI / 2, area: 72 },
+  ])('$name', ({ footprint, rotation, area }) => {
+    const plan = publishedOutlinePlan(footprint, rotation)
+    expect(planArea(plan.wall)).toBeCloseTo(area, 8)
+    expect(planArea(plan.hit)).toBeCloseTo(area, 8)
+    if (footprint !== outlineNotchedL) return
+    const missingCorner: [number, number] = [
+      3 * Math.cos(rotation) + 2 * Math.sin(rotation),
+      -3 * Math.sin(rotation) + 2 * Math.cos(rotation),
+    ]
+    expect(pointInPolygon2D(missingCorner, plan.wall)).toBe(false)
+    expect(pointInPolygon2D(missingCorner, plan.hit)).toBe(false)
+  })
+
+  test('canopy cover controls the click target and its projected eave, not the wall line', () => {
+    const coverFootprint: [number, number][] = [
+      [-6, -4],
+      [6, -4],
+      [6, 6],
+      [-6, 6],
+    ]
+    const plan = publishedOutlinePlan(outlineRectangle, 0, {
+      coverFootprint,
+      pitch: 60,
+      overhang: 1,
+    })
+    // 12 × 8 walls = 96 m²; 12 × 10 canopy = 120 m².
+    // A 60° pitch projects 1 m overhang by cos(60°) = 0.5 m:
+    // (12 + 2 × 0.5) × (10 + 2 × 0.5) = 143 m².
+    expect(planArea(plan.wall)).toBeCloseTo(96, 8)
+    expect(planArea(plan.hit)).toBeCloseTo(120, 8)
+    expect(planArea(plan.eave)).toBeCloseTo(143, 8)
+    expect(pointInPolygon2D([0, 5], plan.hit)).toBe(true)
+    expect(pointInPolygon2D([0, 6.25], plan.hit)).toBe(false)
+    expect(Math.max(...plan.eave.map(([, z]) => z))).toBeCloseTo(6.5, 8)
   })
 })

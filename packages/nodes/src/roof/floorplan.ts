@@ -2,8 +2,10 @@ import {
   type FloorplanGeometry,
   type FloorplanPoint,
   type GeometryContext,
+  getRoofSegmentCoverOutline,
   getRoofSegmentVisibleTopBounds,
   getSegmentSlopeFrame,
+  offsetPlanRing,
   type RoofNode,
   type RoofSegmentNode,
   roofPlanOverlapEntryOwns,
@@ -146,7 +148,9 @@ function buildSegPlan(roof: RoofNode, seg: RoofSegmentNode, drafting: boolean): 
   const footprint =
     seg.roofType === 'conical'
       ? getConicalRoofPlanFootprint(seg).map(([x, z]) => tp(x, z))
-      : [tp(-hw, -hd), tp(hw, -hd), tp(hw, hd), tp(-hw, hd)]
+      : seg.footprint && seg.footprint.length >= 3
+        ? seg.footprint.map(([x, z]) => tp(x, z))
+        : [tp(-hw, -hd), tp(hw, -hd), tp(hw, hd), tp(-hw, hd)]
   const ridges = lw.ridges.map(mapSeg)
   const hips = lw.hips.map(mapSeg)
   const breaks = lw.breaks.map(mapSeg)
@@ -162,21 +166,27 @@ function buildSegPlan(roof: RoofNode, seg: RoofSegmentNode, drafting: boolean): 
       : []
     return { footprint, eave: footprint, ridges, hips, breaks, slopes }
   }
-  // The drip edge: core's own visible-top bounds, which add the horizontal
-  // component of `overhang` (plus half the wall thickness and, on the sloped
-  // faces, the shingle projection) to the footprint on each side.
+  // Outlined roofs use the same covering and horizontal overhang projection
+  // as the 3D roof clip. Legacy rectangles keep their visible-top bounds.
   const edge = getRoofSegmentVisibleTopBounds(seg)
+  const eave =
+    (seg.footprint?.length ?? 0) >= 3 || (seg.coverFootprint?.length ?? 0) >= 3
+      ? offsetPlanRing(
+          getRoofSegmentCoverOutline(seg),
+          seg.overhang * getSegmentSlopeFrame(seg).cosTheta,
+        ).map(([x, z]) => tp(x, z))
+      : [
+          tp(edge.minX, edge.minZ),
+          tp(edge.maxX, edge.minZ),
+          tp(edge.maxX, edge.maxZ),
+          tp(edge.minX, edge.maxZ),
+        ]
   const pitch = roofPitchLabel(seg.pitch)
   // A gable's second arrow is its −z slope.
   const backPitch = seg.roofType === 'gable' ? roofPitchLabel(seg.backPitch ?? seg.pitch) : pitch
   return {
     footprint,
-    eave: [
-      tp(edge.minX, edge.minZ),
-      tp(edge.maxX, edge.minZ),
-      tp(edge.maxX, edge.maxZ),
-      tp(edge.minX, edge.maxZ),
-    ],
+    eave,
     ridges,
     hips,
     breaks,
