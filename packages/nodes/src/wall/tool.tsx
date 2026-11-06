@@ -47,7 +47,7 @@ import {
   resampleTerrainConstructionPlane,
   resolveEventConstructionPlane,
   resolvePointerSupportSurface,
-  resolveTypedCommitEnd,
+  resolveWallDraftClickPoint,
   type SegmentAngleReference,
   snapWallDraftPointDetailed,
   startWallPolygonDraft,
@@ -856,41 +856,34 @@ const LineWallTool: React.FC = () => {
         // positions it for the active segment.
         setDraftMeasurement(null)
       } else if (buildingState.current === 1) {
-        // Typed-length editing (#308): when a buffer is active, commit the
-        // projected endpoint the previews already show — re-snapping the raw
-        // pointer (or the projected point) would change the typed length.
-        // The projection is re-derived from the live draft direction at
-        // commit time (Bugbot 8497d792): append/backspace only change the
-        // buffer, so the pointer-move-published `projectedEnd` can be stale
-        // (e.g. typed "1" then "2" without moving — the click must commit
-        // 12, not 1).
+        // Recompute typed clicks from the current buffer, not a stale preview.
+        // An invalid nonempty buffer refuses the click in both view paths.
         const typing = useWallDraftTyping.getState()
-        const typedCommit =
-          (typing.input &&
-            resolveTypedCommitEnd(
-              [startingPoint.current.x, startingPoint.current.z],
-              [endingPoint.current.x, endingPoint.current.z],
-              typing.input,
-              {
-                bareUnit:
-                  unit === 'imperial' ? 'in' : metricNotation === 'millimeters' ? 'mm' : 'm',
-                system: unit === 'imperial' ? 'imperial' : 'metric',
-              },
-            )) ||
-          (typing.input ? typing.projectedEnd : null)
+        const clickPoint = resolveWallDraftClickPoint({
+          start: [startingPoint.current.x, startingPoint.current.z],
+          currentEnd: [endingPoint.current.x, endingPoint.current.z],
+          rawPoint: localClick,
+          input: typing.input,
+          projectedEnd: typing.projectedEnd,
+          options: {
+            bareUnit: unit === 'imperial' ? 'in' : metricNotation === 'millimeters' ? 'mm' : 'm',
+            system: unit === 'imperial' ? 'imperial' : 'metric',
+          },
+        })
+        if (!clickPoint) return
         const angleLocked = isAngleSnapActive()
-        const snappedEnd =
-          typedCommit ??
-          alignPoint(
-            snapWallDraftPointDetailed({
-              point: localClick,
-              walls: snapWalls,
-              start: angleLocked ? [startingPoint.current.x, startingPoint.current.z] : undefined,
-              angleSnap: angleLocked,
-              magnetic: isMagneticSnapActive(),
-            }).point,
-            { applySnap: !angleLocked },
-          )
+        const snappedEnd = typing.input
+          ? clickPoint
+          : alignPoint(
+              snapWallDraftPointDetailed({
+                point: clickPoint,
+                walls: snapWalls,
+                start: angleLocked ? [startingPoint.current.x, startingPoint.current.z] : undefined,
+                angleSnap: angleLocked,
+                magnetic: isMagneticSnapActive(),
+              }).point,
+              { applySnap: !angleLocked },
+            )
         const dx = snappedEnd[0] - startingPoint.current.x
         const dz = snappedEnd[1] - startingPoint.current.z
         if (dx * dx + dz * dz < 0.01 * 0.01) return

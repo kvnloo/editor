@@ -968,6 +968,7 @@ export {
   isWallTypingKey,
   isWallTypingStartKey,
   resolveTypedCommitEnd,
+  resolveWallDraftClickPoint,
   useWallDraftTyping,
 } from './store/use-wall-draft-typing'
 export { useWallMoveGhosts, type WallMoveGhostBridge } from './store/use-wall-move-ghosts'

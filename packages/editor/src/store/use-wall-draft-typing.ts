@@ -74,8 +74,8 @@ export function acceptsWallTypingKey(key: string, buffer: string): boolean {
  * pointer-steered ray, unaffected by how stale its length is.
  *
  * Returns null when there is no usable buffer (empty / unparseable /
- * non-positive) or no direction (pointer still on the start point) —
- * callers fall back to the store's last `projectedEnd`, then the raw point.
+ * non-positive) or no direction (pointer still on the start point).
+ * A typed click must not interpret that refusal as permission to snap.
  */
 export function resolveTypedCommitEnd(
   start: [number, number],
@@ -91,4 +91,32 @@ export function resolveTypedCommitEnd(
   const length = Math.hypot(dx, dz)
   if (length <= 1e-6) return null
   return [start[0] + (dx / length) * value, start[1] + (dz / length) * value]
+}
+
+/**
+ * Resolve one wall-draft click for both views. With typed input, a refusal
+ * must not silently commit an old preview length or the raw pointer instead.
+ * A cached end may provide direction if the live preview is degenerate, but
+ * the requested length is always re-parsed from the current buffer.
+ */
+export function resolveWallDraftClickPoint({
+  start,
+  currentEnd,
+  rawPoint,
+  input,
+  projectedEnd,
+  options,
+}: {
+  start: [number, number]
+  currentEnd: [number, number]
+  rawPoint: [number, number]
+  input: string
+  projectedEnd: [number, number] | null
+  options: Parameters<typeof parseMeasurement>[2]
+}): [number, number] | null {
+  if (!input) return rawPoint
+  return (
+    resolveTypedCommitEnd(start, currentEnd, input, options) ??
+    (projectedEnd ? resolveTypedCommitEnd(start, projectedEnd, input, options) : null)
+  )
 }

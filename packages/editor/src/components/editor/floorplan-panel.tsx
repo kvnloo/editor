@@ -162,7 +162,7 @@ import { expandSessionSelectionForNode } from '../../store/use-session-groups'
 import { useStairBuildPreview } from '../../store/use-stair-build-preview'
 import {
   acceptsWallTypingKey,
-  resolveTypedCommitEnd,
+  resolveWallDraftClickPoint,
   useWallDraftTyping,
 } from '../../store/use-wall-draft-typing'
 import { FloorplanAlignmentGuideLayer } from '../editor-2d/floorplan-alignment-guide-layer'
@@ -10062,28 +10062,23 @@ export function FloorplanPanel({
 
   const handleWallPlacementPoint = useCallback(
     (rawPoint: WallPlanPoint) => {
-      // Typed-length editing (#308): while a buffer is active, commit the
-      // projected endpoint the preview shows instead of the raw pointer —
-      // keeps the 2D-only commit, the chain continuation, and the length
-      // label in agreement with what the user typed. Re-derived at commit
-      // time (Bugbot 8497d792): digits arriving after the last pointer move
-      // leave `projectedEnd` stale; the commit must reflect the full buffer.
+      // The last preview can precede the last keystroke. Re-resolve at click
+      // time; malformed nonempty input must not fall back to an old endpoint.
       const typing = useWallDraftTyping.getState()
-      const draftPreviewStore = useFloorplanDraftPreview.getState()
-      const typedEnd =
-        (draftStart &&
-          typing.input &&
-          resolveTypedCommitEnd(
-            draftStart,
-            draftPreviewStore.wallDraftEnd ?? rawPoint,
-            typing.input,
-            {
+      const point: WallPlanPoint | null = draftStart
+        ? resolveWallDraftClickPoint({
+            start: draftStart,
+            currentEnd: useFloorplanDraftPreview.getState().wallDraftEnd ?? rawPoint,
+            rawPoint,
+            input: typing.input,
+            projectedEnd: typing.projectedEnd,
+            options: {
               bareUnit: unit === 'imperial' ? 'in' : metricNotation === 'millimeters' ? 'mm' : 'm',
               system: unit === 'imperial' ? 'imperial' : 'metric',
             },
-          )) ||
-        (typing.input ? typing.projectedEnd : null)
-      const point: WallPlanPoint = typedEnd ?? rawPoint
+          })
+        : rawPoint
+      if (!point) return
       if (!draftStart) {
         wallConstructionOptionsRef.current = levelId
           ? resolveTerrainWallConstructionOptions(

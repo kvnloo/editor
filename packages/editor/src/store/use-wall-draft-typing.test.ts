@@ -1,3 +1,4 @@
+import { resolveWallDraftClickPoint } from '@pascal-app/editor'
 import { beforeEach, describe, expect, test } from 'bun:test'
 import {
   acceptsWallTypingKey,
@@ -111,5 +112,50 @@ describe('acceptsWallTypingKey (start gating, Bugbot 7dcff331)', () => {
     expect(acceptsWallTypingKey('c', '180')).toBe(true)
     expect(acceptsWallTypingKey('m', '180c')).toBe(true)
     expect(acceptsWallTypingKey('.', '2')).toBe(true)
+  })
+})
+
+const metric = { bareUnit: 'm', system: 'metric' } as const
+
+function clickPoint(input: string, projectedEnd: [number, number] | null) {
+  return resolveWallDraftClickPoint({
+    start: [0, 0],
+    currentEnd: [1, 0],
+    rawPoint: [7, 0],
+    input,
+    projectedEnd,
+    options: metric,
+  })
+}
+
+describe('wall draft click length contract', () => {
+  test('commits the latest 12 m buffer instead of the stale 1 m preview', () => {
+    expect(clickPoint('12', [1, 0])).toEqual([12, 0])
+  })
+
+  test('refuses zero with a stale cached endpoint', () => {
+    expect(clickPoint('0', [1, 0])).toBeNull()
+  })
+
+  test('refuses zero without a cache while preserving an untyped click', () => {
+    expect(clickPoint('0', null)).toBeNull()
+    expect(clickPoint('', null)).toEqual([7, 0])
+  })
+
+  test('refuses an unparseable nonempty buffer', () => {
+    expect(clickPoint('abc', [1, 0])).toBeNull()
+  })
+
+  test('uses a cached direction only after recomputing the valid typed length', () => {
+    expect(
+      resolveWallDraftClickPoint({
+        start: [0, 0],
+        currentEnd: [0, 0],
+        rawPoint: [7, 0],
+        input: '2',
+        projectedEnd: [1, 0],
+        options: metric,
+      }),
+    ).toEqual([2, 0])
   })
 })
