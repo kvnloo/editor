@@ -6,12 +6,38 @@ export type SceneImportOperation = {
   parentId?: AnyNodeId
 }
 
-function remapReferences<T>(value: T, ids: ReadonlyMap<string, string>): T {
-  if (typeof value === 'string') return (ids.get(value) ?? value) as T
-  if (Array.isArray(value)) return value.map((entry) => remapReferences(entry, ids)) as T
+const NODE_REFERENCE_FIELDS = new Set([
+  'boundarySeparatorIds',
+  'boundaryWallIds',
+  'buildingId',
+  'children',
+  'collectionId',
+  'collectionIds',
+  'controlNodeId',
+  'hostZoneId',
+  'levelId',
+  'nodeId',
+  'nodeIds',
+  'parentId',
+  'roofSegmentId',
+  'siteId',
+  'sourceId',
+  'sourceSlabId',
+  'supportSlabId',
+  'wallId',
+  'zoneId',
+])
+
+function remapReferences<T>(value: T, ids: ReadonlyMap<string, string>, field?: string): T {
+  if (typeof value === 'string') {
+    return (field && NODE_REFERENCE_FIELDS.has(field) ? ids.get(value) ?? value : value) as T
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => remapReferences(entry, ids, field)) as T
+  }
   if (!value || typeof value !== 'object') return value
   return Object.fromEntries(
-    Object.entries(value).map(([key, entry]) => [key, remapReferences(entry, ids)]),
+    Object.entries(value).map(([key, entry]) => [key, remapReferences(entry, ids, key)]),
   ) as T
 }
 
@@ -78,6 +104,7 @@ export function createIfcImportOperations(
     return {
       node: {
         ...node,
+        id: ids.get(id)!,
         parentId: parentId ?? null,
         ...('children' in sourceNode
           ? { children: (childrenByParent.get(id) ?? []).map((childId) => ids.get(childId)!) }
