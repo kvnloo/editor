@@ -263,7 +263,10 @@ export function runRoofClipFrame() {
     const levelObject = sceneRegistry.nodes.get(levelId)
     const level = elevations.get(levelId)
     if (!levelObject || !level) continue
-    const patches = patchesByBuilding.get(level.buildingId)
+    // A lower storey's roof cannot cut meshes hosted by a higher storey.
+    const patches = patchesByBuilding
+      .get(level.buildingId)
+      ?.filter((patch) => patch.ordinal >= level.ordinal)
     if (!patches?.length) {
       if (levelsWithClips.has(levelObject)) restoreLevelClips(levelObject)
       continue
