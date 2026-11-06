@@ -16,7 +16,7 @@ import {
 } from '@pascal-app/editor'
 import { registerBundledLocales } from '@pascal-app/editor/locales'
 import { createElement } from 'react'
-import { renderToStaticMarkup } from 'react-dom/server'
+import { renderToStaticMarkup, renderToString } from 'react-dom/server'
 
 test('the published editor entry registers compiled English messages', () => {
   const i18n = createI18n({ locale: 'en' })
@@ -154,4 +154,84 @@ test('the published scene and host preserve node IDs and authored level names ac
     environment.dispose()
     reloadedEnvironment.dispose()
   }
+})
+
+test('published URL locales keep server and initial-client level labels in sync', () => {
+  registerBundledLocales()
+
+  const generated = { level: 3, name: 'Floor 3' }
+  const authored = { level: 3, name: 'Atrium mezzanine' }
+  const cases = [
+    {
+      url: 'https://pascal.example/project/scene?lang=zh-CN',
+      locale: 'zh-CN',
+      display: '显示设置',
+      markup: '<section><span>4 层</span><span>Atrium mezzanine</span></section>',
+    },
+    {
+      url: 'https://pascal.example/project/scene?lang=zh-Hans',
+      locale: 'zh-Hans',
+      display: '显示设置',
+      markup: '<section><span>4 层</span><span>Atrium mezzanine</span></section>',
+    },
+    {
+      url: 'https://pascal.example/project/scene?lang=zh-hans-cn',
+      locale: 'zh-Hans-CN',
+      display: '显示设置',
+      markup: '<section><span>4 层</span><span>Atrium mezzanine</span></section>',
+    },
+    {
+      url: 'https://pascal.example/project/scene?lang=zh-Hant',
+      locale: 'zh-Hant',
+      display: 'Display settings',
+      markup: '<section><span>Floor 3</span><span>Atrium mezzanine</span></section>',
+    },
+    {
+      url: 'https://pascal.example/project/scene?lang=zh-TW',
+      locale: 'zh-TW',
+      display: 'Display settings',
+      markup: '<section><span>Floor 3</span><span>Atrium mezzanine</span></section>',
+    },
+  ] as const
+
+  const levels = (i18n: ReturnType<typeof createI18n>) =>
+    createElement(
+      PascalI18nProvider,
+      { i18n },
+      createElement(
+        'section',
+        null,
+        createElement(LevelLabel, generated),
+        createElement(LevelLabel, authored),
+      ),
+    )
+
+  for (const { url, locale, display, markup } of cases) {
+    const requested = new URL(url).searchParams.get('lang')
+    if (!requested) throw new Error('Missing requested locale')
+
+    // The standalone request proxy canonicalizes before passing this locale to the client.
+    const resolved = Intl.getCanonicalLocales(requested)[0] ?? 'en'
+    const serverScope = createI18n({ locale: resolved })
+    const clientScope = createI18n({ locale: serverScope.getLocale() })
+    try {
+      expect(serverScope.getLocale()).toBe(locale)
+      expect(clientScope.getLocale()).toBe(locale)
+
+      const title = { id: 'viewer.display.title', message: 'Display settings' }
+      expect(serverScope._(title)).toBe(display)
+      expect(clientScope._(title)).toBe(display)
+
+      const serverMarkup = renderToString(levels(serverScope))
+      const clientInitialMarkup = renderToStaticMarkup(levels(clientScope))
+      expect(serverMarkup).toBe(markup)
+      expect(clientInitialMarkup).toBe(serverMarkup)
+    } finally {
+      serverScope.destroy()
+      clientScope.destroy()
+    }
+  }
+
+  expect(generated).toEqual({ level: 3, name: 'Floor 3' })
+  expect(authored).toEqual({ level: 3, name: 'Atrium mezzanine' })
 })
