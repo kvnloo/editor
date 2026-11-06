@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   type DeepZoomZipArtifactHost,
   type DeepZoomZipTile,
+  createBrowserDeepZoomZipArtifactHost,
   persistDeepZoomZip,
   streamDeepZoomZip,
 } from '@pascal-app/editor/deep-zoom-zip'
@@ -446,5 +447,176 @@ describe('persistDeepZoomZip', () => {
     expect(events.filter((event) => event === 'discard')).toHaveLength(1)
     expect(events).not.toContain('publish')
     expect(cleanup).toBe(1)
+  })
+})
+
+function createOpfsFixture(moveFailure?: Error) {
+  interface Entry {
+    bytes: Uint8Array
+    handle: FileSystemFileHandle
+  }
+
+  const staged = new Map<string, Entry>()
+  const visible = new Map<string, Entry>()
+  const events: string[] = []
+  let publicRemovals = 0
+  let stageRemovals = 0
+  const notFound = () => ({ name: 'NotFoundError' })
+
+  const stagingDirectory = {
+    async getFileHandle(name: string, options?: { create?: boolean }) {
+      let entry = staged.get(name)
+      if (!entry && options?.create) {
+        entry = { bytes: new Uint8Array(0), handle: {} as FileSystemFileHandle }
+        const stagedEntry = entry
+        const handle = {
+          async createWritable() {
+            const parts: Uint8Array[] = []
+            return {
+              async write(chunk: Uint8Array) {
+                parts.push(new Uint8Array(chunk))
+                events.push('write')
+              },
+              async close() {
+                stagedEntry.bytes = concatenate(parts)
+                events.push('close')
+              },
+              async abort() {
+                events.push('abort')
+              },
+            }
+          },
+          async move(_directory: FileSystemDirectoryHandle, filename: string) {
+            // A publish may fail after the last ZIP byte was drained and after a move occurred.
+            const bytes = stagedEntry.bytes
+            const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+            expect(view.getUint32(bytes.length - 22, true)).toBe(0x06054b50)
+            expect(view.getUint16(bytes.length - 12, true)).toBe(6)
+            events.push('move')
+            staged.delete(name)
+            visible.set(filename, stagedEntry)
+            if (moveFailure) throw moveFailure
+          },
+          async isSameEntry(other: FileSystemHandle) {
+            return other === handle
+          },
+          async getFile() {
+            return new Blob([new Uint8Array(stagedEntry.bytes)], { type: 'application/zip' })
+          },
+        } as unknown as FileSystemFileHandle
+        stagedEntry.handle = handle
+        staged.set(name, stagedEntry)
+      }
+      if (!entry) throw notFound()
+      return entry.handle
+    },
+    async removeEntry(name: string) {
+      if (!staged.delete(name)) throw notFound()
+      stageRemovals++
+      events.push('remove-stage')
+    },
+  }
+
+  const directory = {
+    async getDirectoryHandle(name: string, options?: { create?: boolean }) {
+      expect(name).toBe('.deep-zoom-zip-staging')
+      expect(options?.create).toBe(true)
+      return stagingDirectory
+    },
+    async getFileHandle(name: string) {
+      const entry = visible.get(name)
+      if (!entry) throw notFound()
+      return entry.handle
+    },
+    async removeEntry(name: string) {
+      if (!visible.delete(name)) throw notFound()
+      publicRemovals++
+      events.push('remove-public')
+    },
+  } as unknown as FileSystemDirectoryHandle
+
+  return {
+    directory,
+    staged,
+    visible,
+    events,
+    counts: () => ({ publicRemovals, stageRemovals }),
+  }
+}
+
+describe('createBrowserDeepZoomZipArtifactHost', () => {
+  test('falls back to a readable Blob without a persistent directory', async () => {
+    const host = await createBrowserDeepZoomZipArtifactHost({ directory: null })
+    expect(await host.getPublished('scan.zip')).toBeUndefined()
+
+    await persistDeepZoomZip({ name: 'scan', ...descriptorOptions }, pyramid, host)
+
+    const blob = await host.getPublished('scan.zip')
+    expect(blob?.type).toBe('application/zip')
+    const archive = new Uint8Array(await blob!.arrayBuffer())
+    expect(Object.keys(unzipSync(archive))).toHaveLength(6)
+    expect(await host.getPublished('other.zip')).toBeUndefined()
+  })
+
+  test('publishes a finalized ZIP by moving a private OPFS staging handle', async () => {
+    const filesystem = createOpfsFixture()
+    const host = await createBrowserDeepZoomZipArtifactHost({
+      directory: filesystem.directory,
+    })
+
+    await persistDeepZoomZip({ name: 'scan', ...descriptorOptions }, pyramid, host)
+
+    expect([...filesystem.visible.keys()]).toEqual(['scan.zip'])
+    expect(filesystem.staged.size).toBe(0)
+    expect(filesystem.events.indexOf('close')).toBeLessThan(filesystem.events.indexOf('move'))
+    expect(filesystem.counts()).toEqual({ publicRemovals: 0, stageRemovals: 0 })
+    const blob = await host.getPublished('scan.zip')
+    expect(Object.keys(unzipSync(new Uint8Array(await blob!.arrayBuffer())))).toHaveLength(6)
+  })
+
+  test('rolls back a rejected publish after final ZIP drain and preserves the error', async () => {
+    const failure = new Error('atomic move reported a failure')
+    const filesystem = createOpfsFixture(failure)
+    const host = await createBrowserDeepZoomZipArtifactHost({
+      directory: filesystem.directory,
+    })
+    const stage = host.stage.bind(host)
+    let discards = 0
+    let cleanup = 0
+    const observedHost: DeepZoomZipArtifactHost = {
+      async stage() {
+        const temporary = await stage()
+        return {
+          ...temporary,
+          async discard() {
+            discards++
+            await temporary.discard()
+          },
+        }
+      },
+    }
+
+    await expect(
+      persistDeepZoomZip(
+        {
+          name: 'scan',
+          ...descriptorOptions,
+          onCleanup: () => {
+            cleanup++
+          },
+        },
+        pyramid,
+        observedHost,
+      ),
+    ).rejects.toBe(failure)
+
+    expect(filesystem.events.indexOf('close')).toBeLessThan(filesystem.events.indexOf('move'))
+    expect(filesystem.events).toContain('remove-public')
+    expect(filesystem.visible.size).toBe(0)
+    expect(filesystem.staged.size).toBe(0)
+    expect(await host.getPublished('scan.zip')).toBeUndefined()
+    expect(discards).toBe(1)
+    expect(cleanup).toBe(1)
+    expect(filesystem.counts()).toEqual({ publicRemovals: 1, stageRemovals: 0 })
   })
 })

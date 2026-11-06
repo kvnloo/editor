@@ -156,3 +156,9 @@ export async function persistDeepZoomZip(
     throw error
   }
 }
+
+export {
+  type BrowserDeepZoomZipArtifactHost,
+  type BrowserDeepZoomZipHostOptions,
+  createBrowserDeepZoomZipArtifactHost,
+} from './deep-zoom-zip-host'
