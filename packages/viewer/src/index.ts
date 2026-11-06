@@ -322,6 +322,13 @@ export {
   UNDERGROUND_RIM,
   undergroundAmbianceNode,
 } from './lib/underground-ambiance'
+export {
+  COARSE_FALLBACK,
+  createResidency,
+  type ResidencyLookup,
+  type ResidencyOptions,
+  type ResidencyPageId,
+} from './lib/virtual-texture-residency'
 export { createZoneShape, createZoneWallGeometry } from './lib/zone-geometry'
 export type { LightSource } from './store/use-item-light-pool'
 export { catalogLightSource, useItemLightPool } from './store/use-item-light-pool'
