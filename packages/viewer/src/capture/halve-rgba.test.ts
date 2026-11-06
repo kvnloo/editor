@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { halveRgba } from './index'
+import { halveRgba } from '@pascal-app/viewer/capture'
 
 describe('halveRgba', () => {
   test('averages a fully opaque 2x2 block into one pixel', () => {
