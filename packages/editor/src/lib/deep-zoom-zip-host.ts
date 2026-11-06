@@ -13,6 +13,8 @@ export interface BrowserDeepZoomZipArtifactHost extends DeepZoomZipArtifactHost 
 export interface BrowserDeepZoomZipHostOptions {
   /** A host-authorized OPFS or File System Access directory; null forces the Blob fallback. */
   directory?: FileSystemDirectoryHandle | null
+  /** Refuse memory fallback for captures that must stay bounded on disk. */
+  requireStagedFile?: boolean
 }
 
 function isNotFound(error: unknown): boolean {
@@ -56,6 +58,7 @@ function memoryStage(
 ): DeepZoomZipTemporaryArtifact {
   const chunks: Uint8Array[] = []
   let finished = false
+  let ownPublication: { filename: string; blob: Blob } | null = null
 
   return {
     write(chunk) {
@@ -68,14 +71,19 @@ function memoryStage(
       if (published.has(filename) || (directory && (await findFile(directory, filename)))) {
         throw new Error('ZIP artifact already exists: ' + filename)
       }
-      published.set(
-        filename,
-        new Blob(chunks.map((chunk) => new Uint8Array(chunk)), { type: 'application/zip' }),
-      )
+      const blob = new Blob(chunks.map((chunk) => new Uint8Array(chunk)), {
+        type: 'application/zip',
+      })
+      published.set(filename, blob)
+      ownPublication = { filename, blob }
       finished = true
       chunks.length = 0
     },
     discard() {
+      if (ownPublication && published.get(ownPublication.filename) === ownPublication.blob) {
+        published.delete(ownPublication.filename)
+      }
+      ownPublication = null
       finished = true
       chunks.length = 0
     },
@@ -130,7 +138,7 @@ async function fileStage(
       published = true
     },
     async discard() {
-      if (published || discarded) return
+      if (discarded) return
       discarded = true
       if (!closed) {
         try {
@@ -141,7 +149,8 @@ async function fileStage(
         closed = true
       }
       try {
-        // A rejected move can still have committed. Only remove the destination if it is ours.
+        // A rejected move or failed host delivery can leave our own published file.
+        // Never delete another file with the same name.
         if (attemptedName) {
           const destination = await findFile(directory, attemptedName)
           if (destination && (await destination.isSameEntry(file))) {
@@ -182,6 +191,9 @@ export async function createBrowserDeepZoomZipArtifactHost(
       if (directory) {
         const stagedFile = await fileStage(directory)
         if (stagedFile) return stagedFile
+      }
+      if (options.requireStagedFile) {
+        throw new Error('Persistent DeepZoom ZIP staging is unavailable')
       }
       return memoryStage(published, directory)
     },

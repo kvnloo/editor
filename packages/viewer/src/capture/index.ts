@@ -22,6 +22,13 @@ export {
   parseDeepZoomDescriptor,
   type ParsedDeepZoomDescriptor,
 } from './deep-zoom-source'
+export {
+  type GigapixelCaptureFragment,
+  type GigapixelCaptureOptions,
+  type GigapixelCapturePass,
+  type GigapixelCapturePlan,
+  planGigapixelCapture,
+} from './gigapixel-capture-plan'
 export { resolveCaptureFrameMatrix } from './frame'
 export { halveRgba } from './halve-rgba'
 export {

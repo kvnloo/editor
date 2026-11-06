@@ -43,6 +43,9 @@ import { useCallback, useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { CanvasTarget, ClippingGroup, type WebGPURenderer } from 'three/webgpu'
 import { EDITOR_LAYER } from '../../lib/constants'
+import { createBrowserDeepZoomZipArtifactHost } from '../../lib/deep-zoom-zip'
+import { createStagedGigapixelArtifactSink } from '../../lib/gigapixel-artifact-sink'
+import { streamGigapixelCapture } from '../../lib/gigapixel-capture'
 import {
   applySnapshotCapturePose,
   captureSnapshotScene,
@@ -63,6 +66,13 @@ export interface SnapshotCameraData {
   captureMode?: 'standard' | 'viewport' | 'area'
   resolution?: { w: number; h: number }
   presentation?: ThumbnailGenerateEvent['presentation']
+  artifact?: {
+    fileName: string
+    mimeType: 'application/zip'
+    bytes: number
+    sha256: string
+    tileCount: number
+  }
 }
 
 interface ThumbnailGeneratorProps {
@@ -101,6 +111,23 @@ export function captureDimensions(
     Math.sqrt(maxPixels / (size[0] * size[1])),
   )
   return [Math.round(size[0] * scale), Math.round(size[1] * scale)]
+}
+
+function requestedPictureDimensions(
+  canvasSize: readonly [number, number],
+  event: Pick<ThumbnailGenerateEvent, 'ortho' | 'perspective' | 'standardSize' | 'supersample'>,
+): [number, number] {
+  const scale = Math.max(1, event.supersample ?? 1)
+  const size =
+    (event.ortho || event.perspective) && event.standardSize && scale === 1
+      ? [event.standardSize.w, event.standardSize.h]
+      : canvasSize
+  const width = Math.round(size[0] * scale)
+  const height = Math.round(size[1] * scale)
+  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1) {
+    throw new RangeError('Requested capture dimensions must be positive safe integers')
+  }
+  return [width, height]
 }
 
 /**
@@ -613,6 +640,7 @@ export const ThumbnailGenerator = ({ onThumbnailCapture }: ThumbnailGeneratorPro
   const thumbnailCameraRef = useRef<THREE.PerspectiveCamera | null>(null)
   const pipelineRef = useRef<SnapshotPipeline | null>(null)
   const captureVersion = useRef(0)
+  const activeGigapixelCapture = useRef<AbortController | null>(null)
   // An ORTHOGRAPHIC capture (a sheet's elevation, 2026-09-10) needs its own
   // camera and its own pass — the pipeline binds the camera it was built
   // with — built on first use, kept until the atmosphere changes.
@@ -652,6 +680,7 @@ export const ThumbnailGenerator = ({ onThumbnailCapture }: ThumbnailGeneratorPro
 
     return () => {
       mounted = false
+      activeGigapixelCapture.current?.abort()
       captureVersion.current += 1
       thumbnailCameraRef.current = null
       pipelineRef.current?.dispose()
@@ -745,7 +774,13 @@ export const ThumbnailGenerator = ({ onThumbnailCapture }: ThumbnailGeneratorPro
           const canvasSize: [number, number] = [gl.domElement.width, gl.domElement.height]
           const pose = ortho ?? perspective
           const limits = captureLimits(gl)
-          const [width, height] = captureDimensions(canvasSize, event, limits.maxPixels)
+          const boundedSize = captureDimensions(canvasSize, event, limits.maxPixels)
+          const requestedSize = pose ? requestedPictureDimensions(canvasSize, event) : boundedSize
+          const gigapixel =
+            !!pose &&
+            (Math.max(...requestedSize) > MAX_CAPTURE_EDGE ||
+              requestedSize[0] * requestedSize[1] > limits.maxPixels)
+          const [width, height] = gigapixel ? requestedSize : boundedSize
           // a supersampled picture is encoded at the size it could render (the
           // caller asked for canvas × supersample, maybe past this GPU's limits)
           const encodeSize = supersample > 1 ? { w: width, h: height } : standardSize
@@ -997,6 +1032,140 @@ export const ThumbnailGenerator = ({ onThumbnailCapture }: ThumbnailGeneratorPro
               )._nodes?.nodeFrame?.update?.()
             // a sheet's picture goes to the sheets lossless: they pick its print encoding
             const mime = pose ? 'image/png' : undefined
+            if (gigapixel) {
+              if (!pipeline) throw new Error('Snapshot renderer is not ready. Try again.')
+              const host = await createBrowserDeepZoomZipArtifactHost({
+                requireStagedFile: true,
+              })
+              const filename = 'capture-' + globalThis.crypto.randomUUID() + '.deepzoom.zip'
+              const sink = await createStagedGigapixelArtifactSink(host, filename)
+              const controller = new AbortController()
+              activeGigapixelCapture.current = controller
+              try {
+                const stats = await streamGigapixelCapture(
+                  {
+                    name: 'capture',
+                    width,
+                    height,
+                    signal: controller.signal,
+                    passEdge: limits.passEdge,
+                    renderOverlap: TILE_OVERLAP,
+                    tileSize: 512,
+                    overlap: 1,
+                  },
+                  async (tile) => {
+                    if (
+                      version !== captureVersion.current ||
+                      perspectiveCamera !== thumbnailCameraRef.current ||
+                      (cameraPose && event.projectId !== useViewer.getState().projectId)
+                    ) {
+                      controller.abort()
+                    }
+                    controller.signal.throwIfAborted()
+                    const shot = captureSnapshotScene((restore) => {
+                      setUp(restore)
+                      thumbnailCamera.setViewOffset(width, height, tile.x, tile.y, tile.w, tile.h)
+                      restore(() => thumbnailCamera.clearViewOffset())
+                      thumbnailCamera.updateMatrixWorld()
+                      pipeline.applyEnvironment({
+                        theme: useViewer.getState().sceneAppearance,
+                        transparent,
+                        grade: useViewer.getState().shading === 'rendered',
+                        edges,
+                        camera: thumbnailCamera,
+                      })
+                      advanceNodeFrame()
+                      return atCaptureSize(gl as unknown as WebGPURenderer, tile.w, tile.h, () =>
+                        pipeline.capture({
+                          captureMode: 'standard',
+                          standardSize: { w: tile.w, h: tile.h },
+                          mime,
+                        }),
+                      )
+                    })
+                    const result = await within(
+                      Promise.resolve(shot),
+                      CAPTURE_SETTLE_MS,
+                      'The GPU readback of the captured frame never came back.',
+                    )
+                    const bitmap = await createImageBitmap(result.blob)
+                    try {
+                      const canvas = new OffscreenCanvas(tile.w, tile.h)
+                      const context = canvas.getContext('2d')
+                      if (!context) throw new Error('The render pass canvas could not be created')
+                      context.drawImage(bitmap, 0, 0)
+                      return context.getImageData(0, 0, tile.w, tile.h).data
+                    } finally {
+                      bitmap.close()
+                    }
+                  },
+                  async (rgba, w, h) => {
+                    const canvas = new OffscreenCanvas(w, h)
+                    const context = canvas.getContext('2d')
+                    if (!context) throw new Error('The DeepZoom tile encoder could not be created')
+                    context.putImageData(
+                      new ImageData(rgba as Uint8ClampedArray<ArrayBuffer>, w, h),
+                      0,
+                      0,
+                    )
+                    const blob = await canvas.convertToBlob({ type: 'image/webp', quality: 0.82 })
+                    if (blob.type !== 'image/webp') {
+                      throw new Error('This browser cannot encode WebP DeepZoom tiles')
+                    }
+                    return new Uint8Array(await blob.arrayBuffer())
+                  },
+                  sink,
+                )
+                controller.signal.throwIfAborted()
+                const blob = await host.getPublished(filename)
+                if (!blob) throw new Error('Published DeepZoom archive is missing')
+                cameraData.artifact = {
+                  fileName: filename,
+                  mimeType: 'application/zip',
+                  ...stats.artifact,
+                }
+                trace('capture:gigapixel', {
+                  w: width,
+                  h: height,
+                  passes: stats.passes,
+                  tiles: stats.tilesWritten,
+                  bytes: blob.size,
+                  peakResidentPixels: stats.peakResidentPixels,
+                })
+                if (captureMode !== undefined) cameraData.captureMode = captureMode
+                cameraData.resolution = { w: width, h: height }
+                if (
+                  version !== captureVersion.current ||
+                  perspectiveCamera !== thumbnailCameraRef.current
+                ) {
+                  throw new Error('The scene changed during capture. Try again.')
+                }
+                if (cameraPose && event.projectId !== useViewer.getState().projectId) {
+                  throw new Error('The active project changed during capture')
+                }
+                await within(
+                  Promise.resolve(deliverSnapshot(event, blob, cameraData, onCapture)),
+                  CAPTURE_SETTLE_MS,
+                  'The snapshot host never took the DeepZoom archive.',
+                )
+                return
+              } catch (error) {
+                try {
+                  await sink.rollback()
+                } catch (rollbackError) {
+                  throw new AggregateError(
+                    [error, rollbackError],
+                    'Gigapixel capture delivery and rollback failed',
+                  )
+                }
+                throw error
+              } finally {
+                if (activeGigapixelCapture.current === controller) {
+                  activeGigapixelCapture.current = null
+                }
+              }
+            }
+
             const tiles = pose && pipeline ? tileGrid(width, height, limits.passEdge, TILE_OVERLAP) : []
 
             if (tiles.length > 1 && pipeline) {
