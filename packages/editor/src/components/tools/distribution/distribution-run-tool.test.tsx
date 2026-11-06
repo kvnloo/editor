@@ -1,9 +1,13 @@
 import { expect, test } from 'bun:test'
-import { emitter, type GridEvent, useScene, WallNode } from '@pascal-app/core'
+import { type AnyNodeId, emitter, type GridEvent, useScene, WallNode } from '@pascal-app/core'
 import { type EditorGridEvent, useEditor, useInteractionScope } from '@pascal-app/editor'
+import {
+  type RunPoint,
+  type ScenePort,
+  useDistributionRunTool,
+} from '@pascal-app/editor/distribution'
 import { useThree } from '@react-three/fiber'
 import { act, create } from '@react-three/test-renderer'
-import { useDistributionRunTool } from './distribution-run-tool'
 
 test.each(['duct-segment', 'pipe-segment'] as const)(
   '%s releases its wall plane after an outward commit and retains it along the wall',
@@ -207,6 +211,125 @@ test.each(['duct-segment', 'pipe-segment'] as const)(
       await renderer?.unmount()
       useEditor.setState(previousEditor)
       useInteractionScope.setState(previousScope)
+      if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow)
+      else Reflect.deleteProperty(globalThis, 'window')
+      if (previousAct) Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', previousAct)
+      else Reflect.deleteProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT')
+    }
+  },
+)
+
+test.each(['2d', '3d'] as const)(
+  'graded horizontal waste routes snap only to matching-height connections in %s',
+  async (view) => {
+    const previousScene = useScene.getState()
+    const previousEditor = useEditor.getState()
+    const previousScope = useInteractionScope.getState()
+    const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window')
+    const previousAct = Object.getOwnPropertyDescriptor(globalThis, 'IS_REACT_ACT_ENVIRONMENT')
+    Object.defineProperty(globalThis, 'window', {
+      value: new EventTarget(),
+      configurable: true,
+      writable: true,
+    })
+    Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', {
+      value: true,
+      configurable: true,
+      writable: true,
+    })
+
+    const collar: ScenePort = {
+      nodeId: 'pipe_existing' as AnyNodeId,
+      id: 'end',
+      position: [4, 2, 0],
+      direction: [-1, 0, 0],
+      diameter: 2,
+      system: 'waste',
+    }
+    let gradePercent = 0
+    let connectionY = 2
+    let connectionKind: 'port' | 'body' = 'port'
+    let tool: ReturnType<typeof useDistributionRunTool> | undefined
+
+    function Host() {
+      const { gl } = useThree()
+      gl.domElement.getBoundingClientRect = () =>
+        ({ left: 0, top: 0, width: 600, height: 300 }) as DOMRect
+      tool = useDistributionRunTool({
+        active: true,
+        levelId: 'level_test',
+        toolName: 'pipe-segment',
+        routingMode: 'horizontal',
+        elevation: 2,
+        getPorts: () =>
+          connectionKind === 'port'
+            ? [{ ...collar, position: [4, connectionY, 0] as RunPoint }]
+            : [],
+        findBody: () =>
+          connectionKind === 'body'
+            ? { nodeId: collar.nodeId, segmentIndex: 0, point: [4, connectionY, 0] as RunPoint }
+            : null,
+        resolveFreeEnd: (start, end): RunPoint => [
+          end[0],
+          start[1] -
+            (gradePercent / 100) * Math.hypot(end[0] - start[0], end[2] - start[2]),
+          end[2],
+        ],
+        commit: ({ end }) => ({
+          nextStart: end,
+          nextConnection: { port: null, body: null },
+        }),
+      })
+      return null
+    }
+
+    const event = (x: number): EditorGridEvent => ({
+      position: [x, 0, 0],
+      localPosition: [x, 0, 0],
+      nativeEvent: {} as GridEvent['nativeEvent'],
+      screenProjection: {
+        pointer: [x * 50, 0],
+        localToScreen: [50, 0, 0, 50, 0, 0],
+      },
+    })
+    let renderer: Awaited<ReturnType<typeof create>> | undefined
+    try {
+      useEditor.setState({
+        snappingModeByContext: { wall: 'grid', polygon: 'grid', item: 'grid' },
+      })
+      useEditor.getState().showView(view)
+      renderer = await create(<Host />)
+      await act(async () => {
+        emitter.emit('grid:click', event(0))
+      })
+      expect(tool?.start).toEqual([0, 2, 0])
+
+      for (const kind of ['port', 'body'] as const) {
+        for (const scenario of [
+          { gradePercent: 0, connectionY: 2, shouldConnect: true },
+          { gradePercent: 3, connectionY: 1.88, shouldConnect: true },
+          { gradePercent: 3, connectionY: 2, shouldConnect: false },
+        ]) {
+          connectionKind = kind
+          gradePercent = scenario.gradePercent
+          connectionY = scenario.connectionY
+          await act(async () => {
+            emitter.emit('grid:move', event(4))
+          })
+          expect(tool?.endConnection.port?.nodeId ?? null).toBe(
+            kind === 'port' && scenario.shouldConnect ? collar.nodeId : null,
+          )
+          expect(tool?.endConnection.body?.nodeId ?? null).toBe(
+            kind === 'body' && scenario.shouldConnect ? collar.nodeId : null,
+          )
+          expect(tool?.cursor?.[1]).toBeCloseTo(2 - (4 * scenario.gradePercent) / 100, 6)
+        }
+      }
+    } finally {
+      await renderer?.unmount()
+      useScene.setState(previousScene, true)
+      useEditor.setState(previousEditor, true)
+      useInteractionScope.setState(previousScope, true)
       if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow)
       else Reflect.deleteProperty(globalThis, 'window')
       if (previousAct) Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', previousAct)

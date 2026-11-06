@@ -740,13 +740,22 @@ export function useDistributionRunTool(config: DistributionRunToolConfig) {
         const screen = projectConnection(candidate)
         return !!screen && Math.hypot(screen.x - pointer[0], screen.y - pointer[1]) <= 12
       }
+      const matchesRouteElevation = (candidate: readonly [number, number, number]): boolean => {
+        if (!explicitRoute) return true
+        // Grade the endpoint at the candidate's XZ, not at the pointer's start elevation.
+        const ungradedEnd: RunPoint = [candidate[0], point[1], candidate[2]]
+        const expectedEnd =
+          currentStart && adapter.routingMode === 'horizontal'
+            ? (adapter.resolveFreeEnd?.(currentStart, ungradedEnd, startConnectionRef.current) ??
+              ungradedEnd)
+            : ungradedEnd
+        return Math.abs(candidate[1] - expectedEnd[1]) < 1e-4
+      }
       const resolveConnection = (candidate: RunPoint): ResolvedRunPoint | null => {
         if (bypass || !(isGridSnapActive() || isMagneticSnapActive() || isAngleSnapActive()))
           return null
         const source = startConnectionRef.current.port
-        const ports = adapter
-          .getPorts()
-          .filter((port) => !explicitRoute || Math.abs(port.position[1] - point[1]) < 1e-4)
+        const ports = adapter.getPorts().filter((port) => matchesRouteElevation(port.position))
         const hit = findScreenPort(ports, pointer, projectConnection, source)
         if (hit) {
           return {
@@ -764,7 +773,7 @@ export function useDistributionRunTool(config: DistributionRunToolConfig) {
           adapter.connectCrossings === false ? null : adapter.findBody(candidate, drawingTarget)
         if (
           body &&
-          (!explicitRoute || Math.abs(body.point[1] - point[1]) < 1e-4) &&
+          matchesRouteElevation(body.point) &&
           acceptsConnection(body.point) &&
           body.nodeId !== source?.nodeId
         ) {
