@@ -9,11 +9,30 @@ const point = z
   .describe('A point of the photo as [across, down], fractions of its width and height (0 to 1).')
 const segment = z.array(point).length(2)
 
+const photoPixel = z.array(z.number().finite()).length(2)
+const reprojectionOutput = z.looseObject({
+  correspondences: z.array(
+    z.looseObject({
+      face: z.string(),
+      kind: z.enum(['row_corner', 'known_point']),
+      observedPx: photoPixel,
+      projectedPx: photoPixel.nullable(),
+      errorPx: z.number().finite().nullable(),
+    }),
+  ),
+  rmsPx: z.number().finite().nullable(),
+  tolerancePx: z.number().nonnegative().finite().nullable(),
+  verdict: z.enum(['pass', 'fail', 'unknown']),
+  reason: z
+    .enum(['insufficient_correspondences', 'invalid_projection', 'tolerance_not_provided'])
+    .optional(),
+})
+
 export const straightenFacadePhotoTool = {
   name: 'straighten_facade_photo',
   title: 'Straighten a facade photo',
   description:
-    "Straighten faces of a building photo into elevations at a known scale, to measure the facade instead of guessing it: bay pitch, pier and window widths, pane grids, side panels, spandrels, sill and head heights. Pass every face the photo shows in one call: they share the photo's camera, found from the lines picked on them, so each elevation is metric from its walls' width and the storey height is measured from the photo rather than taken from the scene. Per face: its vertical edges (two points on each, top and bottom as seen), the same feature on at least two storeys (the window heads of a low and a high floor, say: two points far apart along each, with that storey's level), and the face's walls on one storey (their extent is the width). A face whose far edge leaves the photo gives only the corner it shares with another face. Points are fractions of the photo, [0,0] its top left and [1,1] its bottom right. Returns per face the straightened elevation with a metre grid and the scene's storeys drawn at the picked feature, a close-up of each picked corner to check (call again with corrected points if one is off), the photo pixels per metre at each side, the fit error and the photo's storey height beside the scene's; and the camera: its focal length (a phone's main camera is about 26 mm), its tilt, what it assumes, and its pose in the scene (position, target, up, vertical fov, the photo's aspect): view_scene from that pose shows the scene as the photo does. One face seen square on (a frontal photo) gives a pose too, its focal length taken from focal35mm when it cannot be read from the photo. A single face with both edges is fitted from its own picks, its heights from the storeys. Only what lies on the wall plane measures true: balconies, overhangs and anything standing proud are smeared, and a face seen at a grazing angle has too few pixels per metre for panes.",
+    "Straighten faces of a building photo into elevations at a known scale, to measure the facade instead of guessing it: bay pitch, pier and window widths, pane grids, side panels, spandrels, sill and head heights. Pass every face the photo shows in one call: they share the photo's camera, found from the lines picked on them, so each elevation is metric from its walls' width and the storey height is measured from the photo rather than taken from the scene. Per face: its vertical edges (two points on each, top and bottom as seen), the same feature on at least two storeys (the window heads of a low and a high floor, say: two points far apart along each, with that storey's level), and the face's walls on one storey (their extent is the width). A face whose far edge leaves the photo gives only the corner it shares with another face. Points are fractions of the photo, [0,0] its top left and [1,1] its bottom right. Returns per face the straightened elevation with a metre grid and the scene's storeys drawn at the picked feature, a close-up of each picked corner to check (call again with corrected points if one is off), the photo pixels per metre at each side, the fit error and the photo's storey height beside the scene's; and the camera: its focal length (a phone's main camera is about 26 mm), its tilt, what it assumes, and its pose in the scene (position, target, up, vertical fov, the photo's aspect): view_scene from that pose shows the scene as the photo does. One face seen square on (a frontal photo) gives a pose too, its focal length taken from focal35mm when it cannot be read from the photo. A single face with both edges is fitted from its own picks, its heights from the storeys. Pass reprojectionTolerancePx to check the solved scene camera against known scene points: returns per-correspondence observed/projected photo pixels, pixel error, RMS, and pass/fail/unknown. At least five distinct non-collinear known points and an explicit tolerance are required for pass; otherwise unknown. Only what lies on the wall plane measures true: balconies, overhangs and anything standing proud are smeared, and a face seen at a grazing angle has too few pixels per metre for panes.",
   input: {
     source: z.string().describe("The photo: its attachment URL, as the user's message gives it."),
     faces: z
@@ -86,6 +105,14 @@ export const straightenFacadePhotoTool = {
       description:
         "The camera's focal length on a 36 × 24 mm frame, when you know it (the photo's metadata, or a render's camera): a face seen square on does not show it, and the pose then takes a phone's 26 mm and says so (focalAssumed).",
     }).optional(),
+    reprojectionTolerancePx: z
+      .number()
+      .nonnegative()
+      .finite()
+      .optional()
+      .describe(
+        'Maximum allowed RMS pixel error of the solved camera against known scene/photo correspondences. Omit to measure without a pass verdict; too few known points also return unknown.',
+      ),
     verticals: z
       .array(segment)
       .max(12)
@@ -94,4 +121,17 @@ export const straightenFacadePhotoTool = {
         "Vertical lines on the building besides the face edges (pier sides, window jambs, another corner), two points far apart on each. They give the camera's tilt and roll more surely than the face edges alone.",
       ),
   },
+  output: z.looseObject({
+    faces: z.array(z.looseObject({ residualPx: z.number().finite() })),
+    camera: z
+      .looseObject({
+        pose: z
+          .looseObject({
+            edgeResidualPx: z.number().finite(),
+            reprojection: reprojectionOutput,
+          })
+          .nullable(),
+      })
+      .nullable(),
+  }),
 }

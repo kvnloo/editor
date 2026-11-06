@@ -739,7 +739,11 @@ export function registerOperationTool(
       inputSchema: z.object(tool.contract.input),
       // Loose: a client that listed the tools rejects any field the schema leaves out, and the
       // operations in core grow fields (verify_scene's guesses) that this list would miss.
-      ...(tool.outputSchema ? { outputSchema: z.looseObject(tool.outputSchema) } : {}),
+      ...(tool.contract.output
+        ? { outputSchema: tool.contract.output }
+        : tool.outputSchema
+          ? { outputSchema: z.looseObject(tool.outputSchema) }
+          : {}),
       annotations: tool.annotations,
     },
     async (input: Record<string, unknown>) => {
