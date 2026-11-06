@@ -72,7 +72,7 @@ export function portConnection(source: NodePort, target: NodePort): ConnectionCo
     return { status: 'incompatible', label: 'Ports are not joined' }
   }
   const compatibility = connectionCompatibility(source, target)
-  if (compatibility.status !== 'match') return compatibility
+  if (compatibility.status !== 'match' && compatibility.status !== 'adapter') return compatibility
   const a = Math.hypot(...source.direction)
   const b = Math.hypot(...target.direction)
   if (a < 1e-9 || b < 1e-9) return { status: 'unknown', label: 'Connection direction unavailable' }
