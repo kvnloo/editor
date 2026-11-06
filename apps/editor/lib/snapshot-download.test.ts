@@ -1,5 +1,7 @@
 import { expect, spyOn, test } from 'bun:test'
 import { emitter, type SnapshotSavedEvent } from '@pascal-app/core'
+import type { EditorProps } from '@pascal-app/editor'
+import { createSceneThumbnailCapture } from './scene-thumbnail-capture'
 import { downloadSnapshot } from './snapshot-download'
 
 const camera = {
@@ -169,6 +171,100 @@ test('overlapping manual downloads acknowledge only the completed shutter', asyn
         requestId: 'manual-first',
         projectId: 'project',
         url: 'blob:manual-first',
+        width: 1920,
+        height: 1080,
+      },
+    ])
+  } finally {
+    emitter.off('snapshot:saved', onSaved)
+  }
+})
+
+test('an embedded Editor host acknowledges only a completed manual request', async () => {
+  const saved: SnapshotSavedEvent[] = []
+  const onSaved = (event: SnapshotSavedEvent | undefined) => {
+    if (event) saved.push(event)
+  }
+  emitter.on('snapshot:saved', onSaved)
+
+  const uploaded: Array<{ sceneId: string; blob: Blob }> = []
+  const downloaded: Array<{ blob: Blob; filename: string; requestId?: string }> = []
+  const background = new Blob(['thumbnail'], { type: 'image/webp' })
+  const frame = new Blob(['manual frame'], { type: 'image/webp' })
+  let finish!: (url: string) => void
+  const now = () => new Date('2026-01-02T03:04:05.000Z')
+
+  const onThumbnailCapture: NonNullable<EditorProps['onThumbnailCapture']> =
+    createSceneThumbnailCapture(
+      { id: 'scene', name: 'Demo / Model', projectId: 'embedded-project' },
+      {
+        upload: async (sceneId, blob) => {
+          uploaded.push({ sceneId, blob })
+        },
+        download: (projectId, projectName, blob, cameraData) =>
+          downloadSnapshot(
+            projectId,
+            projectName,
+            blob,
+            cameraData,
+            (payload, filename) => {
+              downloaded.push({ blob: payload, filename, requestId: cameraData.requestId })
+              if (cameraData.requestId === 'manual-failed') {
+                throw new Error('Download unavailable')
+              }
+              return new Promise<string>((resolve) => {
+                finish = resolve
+              })
+            },
+            now,
+          ),
+      },
+    )
+
+  try {
+    await onThumbnailCapture(background, {
+      ...camera,
+      captureMode: undefined,
+      requestId: undefined,
+    })
+    await onThumbnailCapture(background, {
+      ...camera,
+      captureMode: undefined,
+      requestId: 'background-stale',
+    })
+    expect(uploaded).toEqual([{ sceneId: 'scene', blob: background }])
+    expect(downloaded).toEqual([])
+    expect(saved).toEqual([])
+
+    const pending = Promise.resolve(
+      onThumbnailCapture(frame, { ...camera, requestId: 'manual-success' }),
+    )
+    await expect(
+      Promise.resolve(onThumbnailCapture(frame, { ...camera, requestId: 'manual-failed' })),
+    ).rejects.toThrow('Download unavailable')
+    expect(saved).toEqual([])
+    expect(uploaded).toHaveLength(1)
+    expect(downloaded).toEqual([
+      {
+        blob: frame,
+        filename: 'Demo-Model-snapshot-2026-01-02T03-04-05-000Z.webp',
+        requestId: 'manual-success',
+      },
+      {
+        blob: frame,
+        filename: 'Demo-Model-snapshot-2026-01-02T03-04-05-000Z.webp',
+        requestId: 'manual-failed',
+      },
+    ])
+
+    finish('blob:manual-success')
+    await pending
+    expect(saved).toEqual([
+      {
+        id: 'manual-success',
+        requestId: 'manual-success',
+        projectId: 'embedded-project',
+        url: 'blob:manual-success',
         width: 1920,
         height: 1080,
       },

@@ -26,10 +26,11 @@ export async function downloadSnapshot(
   blob: Blob,
   camera: SnapshotCameraData,
   download: (blob: Blob, filename: string) => string | Promise<string> = downloadImage,
+  now: () => Date = () => new Date(),
 ) {
   const name = projectName.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'Pascal'
   const extension = blob.type === 'image/png' ? 'png' : blob.type === 'image/jpeg' ? 'jpg' : 'webp'
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const timestamp = now().toISOString().replace(/[:.]/g, '-')
   const url = await download(blob, `${name}-snapshot-${timestamp}.${extension}`)
   emitter.emit('snapshot:saved', {
     projectId,

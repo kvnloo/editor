@@ -9,7 +9,6 @@ import {
   ItemsPanel,
   type SceneGraph,
   type SidebarTab,
-  type SnapshotCameraData,
 } from '@pascal-app/editor'
 import { PascalWebXRButton } from '@webxr/plugin/pascal-editor'
 import { Hammer, Layers, Package, Palette, Settings } from 'lucide-react'
@@ -24,7 +23,7 @@ import {
   type PersistedSceneGraph,
   sceneGraphSignature,
 } from '@/lib/scene-signature'
-import { downloadSnapshot } from '@/lib/snapshot-download'
+import { createSceneThumbnailCapture } from '@/lib/scene-thumbnail-capture'
 import { useThumbnailAutosave } from '@/lib/use-thumbnail-autosave'
 import { BuildTab } from './build-tab'
 import { EditorNavbar } from './editor-navbar'
@@ -343,19 +342,8 @@ function SceneEditor({ initialScene, meta: initialMeta }: SceneLoaderProps) {
     return () => source.close()
   }, [meta.id])
 
-  const handleThumb = useCallback(
-    async (blob: Blob, cameraData: SnapshotCameraData) => {
-      if (cameraData.captureMode) {
-        await downloadSnapshot(meta.projectId ?? 'default', meta.name, blob, cameraData)
-        return
-      }
-      if (cameraData.requestId) return
-      await fetch(`/api/scenes/${meta.id}/thumbnail`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'image/webp' },
-        body: blob,
-      }).catch(() => {})
-    },
+  const handleThumb = useMemo(
+    () => createSceneThumbnailCapture(meta),
     [meta.id, meta.name, meta.projectId],
   )
 
