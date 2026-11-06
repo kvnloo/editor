@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test'
-import { type DeepZoomZipTile, streamDeepZoomZip } from '@pascal-app/editor/deep-zoom-zip'
+import {
+  type DeepZoomZipArtifactHost,
+  type DeepZoomZipTile,
+  persistDeepZoomZip,
+  streamDeepZoomZip,
+} from '@pascal-app/editor/deep-zoom-zip'
 import { deepZoomDescriptor } from '@pascal-app/viewer/capture'
 import { strFromU8, unzipSync } from 'fflate'
 
@@ -305,5 +310,141 @@ describe('streamDeepZoomZip', () => {
         () => {},
       ),
     ).rejects.toThrow(RangeError)
+  })
+})
+
+function createTransactionalHost(failOnWrite?: { at: number; error: Error }) {
+  const visible = new Map<string, Uint8Array>()
+  const staged = new Set<Uint8Array[]>()
+  const events: string[] = []
+  let writes = 0
+  const host: DeepZoomZipArtifactHost = {
+    stage() {
+      const chunks: Uint8Array[] = []
+      staged.add(chunks)
+      events.push('stage')
+      return {
+        write(chunk) {
+          expect(visible.size).toBe(0)
+          chunks.push(chunk.slice())
+          writes++
+          events.push('write')
+          if (failOnWrite?.at === writes) {
+            return Promise.reject(failOnWrite.error)
+          }
+        },
+        publish(filename) {
+          const bytes = concatenate(chunks)
+          const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+          // The end-of-central-directory record must already be present before publication.
+          expect(view.getUint32(bytes.length - 22, true)).toBe(0x06054b50)
+          expect(view.getUint16(bytes.length - 12, true)).toBe(6)
+          visible.set(filename, bytes)
+          staged.delete(chunks)
+          events.push('publish')
+        },
+        discard() {
+          staged.delete(chunks)
+          events.push('discard')
+        },
+      }
+    },
+  }
+  return { host, visible, staged, events, writeCount: () => writes }
+}
+
+describe('persistDeepZoomZip', () => {
+  test('publishes only a complete central-directory ZIP', async () => {
+    const { host, visible, staged, events } = createTransactionalHost()
+
+    await persistDeepZoomZip({ name: 'scan', ...descriptorOptions }, pyramid, host)
+
+    expect([...visible.keys()]).toEqual(['scan.zip'])
+    expect(staged.size).toBe(0)
+    expect(events.at(-1)).toBe('publish')
+    expect(events).not.toContain('discard')
+
+    const entries = unzipSync(visible.get('scan.zip')!)
+    expect(Object.keys(entries)).toEqual([
+      'scan.dzi',
+      'scan_files/0/0_0.webp',
+      'scan_files/1/0_0.webp',
+      'scan_files/1/1_0.webp',
+      'scan_files/1/0_1.webp',
+      'scan_files/1/1_1.webp',
+    ])
+    expect(strFromU8(entries['scan.dzi']!)).toBe(deepZoomDescriptor(descriptorOptions))
+    for (const tile of pyramid) {
+      const path = 'scan_files/' + tile.level + '/' + tile.col + '_' + tile.row + '.webp'
+      expect(entries[path]).toEqual(tile.bytes)
+    }
+  })
+
+  test('aborts after a staged tile without exposing a partial archive', async () => {
+    const controller = new AbortController()
+    const { host, visible, staged, events, writeCount } = createTransactionalHost()
+    let cleanup = 0
+    let delivered = 0
+
+    async function* tiles(): AsyncGenerator<DeepZoomZipTile> {
+      delivered++
+      yield pyramid[0]!
+      controller.abort()
+      delivered++
+      yield pyramid[1]!
+    }
+
+    await expect(
+      persistDeepZoomZip(
+        {
+          name: 'scan',
+          ...descriptorOptions,
+          signal: controller.signal,
+          onCleanup: () => {
+            cleanup++
+          },
+        },
+        tiles(),
+        host,
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+
+    expect(delivered).toBe(2)
+    expect(writeCount()).toBeGreaterThan(0)
+    expect(visible.size).toBe(0)
+    expect(staged.size).toBe(0)
+    expect(events.filter((event) => event === 'discard')).toHaveLength(1)
+    expect(events).not.toContain('publish')
+    expect(cleanup).toBe(1)
+  })
+
+  test('rejects an async staged-writer error and discards all unpublished bytes', async () => {
+    const failure = new Error('temporary ZIP writer failed')
+    const { host, visible, staged, events, writeCount } = createTransactionalHost({
+      at: 2,
+      error: failure,
+    })
+    let cleanup = 0
+
+    await expect(
+      persistDeepZoomZip(
+        {
+          name: 'scan',
+          ...descriptorOptions,
+          onCleanup: () => {
+            cleanup++
+          },
+        },
+        pyramid,
+        host,
+      ),
+    ).rejects.toBe(failure)
+
+    expect(writeCount()).toBe(2)
+    expect(visible.size).toBe(0)
+    expect(staged.size).toBe(0)
+    expect(events.filter((event) => event === 'discard')).toHaveLength(1)
+    expect(events).not.toContain('publish')
+    expect(cleanup).toBe(1)
   })
 })

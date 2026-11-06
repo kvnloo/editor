@@ -105,3 +105,54 @@ export async function streamDeepZoomZip(
     throw error
   }
 }
+
+/**
+ * A host-owned temporary artifact. Staged bytes must be hidden from readers.
+ * publish must atomically expose a complete artifact or reject without exposing it.
+ */
+export interface DeepZoomZipTemporaryArtifact {
+  write(chunk: Uint8Array): void | Promise<void>
+  publish(filename: string): void | Promise<void>
+  discard(): void | Promise<void>
+}
+
+export interface DeepZoomZipArtifactHost {
+  stage(): DeepZoomZipTemporaryArtifact | Promise<DeepZoomZipTemporaryArtifact>
+}
+
+/** Stages the entire ZIP before allowing the host to publish it. */
+export async function persistDeepZoomZip(
+  options: DeepZoomZipOptions,
+  tiles: AsyncIterable<DeepZoomZipTile> | Iterable<DeepZoomZipTile>,
+  host: DeepZoomZipArtifactHost,
+): Promise<void> {
+  const staged = await host.stage()
+  try {
+    // Keep writer cleanup in this transaction so failure rolls back exactly once.
+    await streamDeepZoomZip({ ...options, onCleanup: undefined }, tiles, (chunk) =>
+      staged.write(chunk),
+    )
+    if (options.signal?.aborted) {
+      const error = new Error('DeepZoom ZIP writing aborted')
+      error.name = 'AbortError'
+      throw error
+    }
+    await staged.publish(options.name + '.zip')
+  } catch (error) {
+    let rollbackError: unknown
+    try {
+      await staged.discard()
+    } catch (cause) {
+      rollbackError = cause
+    }
+    try {
+      await options.onCleanup?.()
+    } catch {
+      // Preserve the original failure, as the streaming writer does.
+    }
+    if (rollbackError !== undefined) {
+      throw new AggregateError([error, rollbackError], 'DeepZoom ZIP rollback failed')
+    }
+    throw error
+  }
+}
