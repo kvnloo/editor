@@ -96,3 +96,30 @@ export function resolveRoofSegmentHit(
   }
   return null
 }
+
+/** A snap can leave the hit segment; reproject before checking its actual host. */
+export function resolveRoofSegmentAtSnappedPosition(
+  roof: RoofNode,
+  target: RoofSegmentHit & { hit: RoofSegmentHit },
+): RoofSegmentHit & { hit: RoofSegmentHit } {
+  const obj = sceneRegistry.nodes.get(target.segment.id)
+  if (!obj) return target
+  obj.updateWorldMatrix(true, false)
+  const point = obj.localToWorld(new THREE.Vector3(target.localX, target.localY, target.localZ))
+  const resolved = resolveRoofSegmentHit(roof, point.x, point.y, point.z)
+  if (!resolved || resolved.segment.id === target.segment.id) return target
+  const reach = getRoofSegmentDeckReach(resolved.segment)
+  if (
+    Math.abs(resolved.localX) > resolved.segment.width / 2 + reach.x ||
+    Math.abs(resolved.localZ) > resolved.segment.depth / 2 + reach.z
+  ) {
+    return target
+  }
+  return {
+    ...target,
+    segment: resolved.segment,
+    localX: resolved.localX,
+    localY: resolved.localY,
+    localZ: resolved.localZ,
+  }
+}

@@ -21,7 +21,10 @@ import { useViewer } from '@pascal-app/viewer'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { RoofAttachmentFallbackPreview } from '../shared/roof-attachment-fallback-preview'
-import { resolveRoofSegmentHit } from '../shared/roof-segment-hit'
+import {
+  resolveRoofSegmentAtSnappedPosition,
+  resolveRoofSegmentHit,
+} from '../shared/roof-segment-hit'
 import {
   clearRoofSurfacePlacementGuides,
   publishRoofSurfacePlacementGuides,
@@ -96,11 +99,60 @@ const ChimneyTool = () => {
       }
     }
 
+    const resolve = (event: RoofEvent) => {
+      const hit = resolveRoofSegmentHit(event.node as RoofNode, ...event.position)
+      if (!hit) return null
+      const force = event.nativeEvent?.altKey === true
+      const gridStep = !force && isGridSnapActive() ? useEditor.getState().gridSnapStep : 0
+      let placement = resolveChimneyPlacement(
+        hit.segment,
+        previewNode,
+        hit.localX,
+        hit.localZ,
+        gridStep,
+      )
+      let target = {
+        ...hit,
+        hit,
+        localX: placement.position[0],
+        localY: placement.position[1],
+        localZ: placement.position[2],
+      }
+      if (gridStep > 0) {
+        target = resolveRoofSegmentAtSnappedPosition(event.node as RoofNode, target)
+        placement = resolveChimneyPlacement(
+          target.segment,
+          previewNode,
+          target.localX,
+          target.localZ,
+        )
+      }
+      if (!force && isMagneticSnapActive()) {
+        target = resolveRoofSegmentAtSnappedPosition(
+          event.node as RoofNode,
+          snapRoofSurfaceNodeTarget({
+            target: {
+              ...target,
+              localX: placement.position[0],
+              localY: placement.position[1],
+              localZ: placement.position[2],
+            },
+            node: previewNode,
+          }),
+        )
+        placement = resolveChimneyPlacement(
+          target.segment,
+          previewNode,
+          target.localX,
+          target.localZ,
+        )
+      }
+      return { target, placement, force }
+    }
+
     const updatePreview = (event: RoofEvent) => {
       const wx = event.position[0]
-      const wy = event.position[1]
       const wz = event.position[2]
-
       const sx = Math.round(wx * 20) / 20
       const sz = Math.round(wz * 20) / 20
       const prev = lastSnapRef.current
@@ -109,95 +161,49 @@ const ChimneyTool = () => {
         lastSnapRef.current = [sx, sz]
       }
 
-      const hit = resolveRoofSegmentHit(event.node as RoofNode, wx, wy, wz)
-      if (!hit) return
-      const placement = resolveChimneyPlacement(
-        hit.segment,
-        previewNode,
-        hit.localX,
-        hit.localZ,
-        event.nativeEvent?.altKey !== true && isGridSnapActive()
-          ? useEditor.getState().gridSnapStep
-          : 0,
-      )
-      if (event.nativeEvent?.altKey !== true && isMagneticSnapActive()) {
-        const snapped = snapRoofSurfaceNodeTarget({
-          target: { ...hit, hit, localX: placement.position[0], localZ: placement.position[2] },
-          node: previewNode,
-        })
-        Object.assign(
-          placement,
-          resolveChimneyPlacement(hit.segment, previewNode, snapped.localX, snapped.localZ),
-        )
-      }
-      hit.localX = placement.position[0]
-      hit.localZ = placement.position[2]
-      setValid(placement.valid || event.nativeEvent?.altKey === true)
-
-      const xform = computeSegmentXform(hit.segment.id)
+      const resolved = resolve(event)
+      if (!resolved) return
+      const { target, placement, force } = resolved
+      setValid(placement.valid || force)
+      const xform = computeSegmentXform(target.segment.id)
       if (!xform) return
       setSegmentXform(xform)
-      setHitLocal([hit.localX, hit.localY, hit.localZ])
-      setPreviewSegment(hit.segment)
+      setHitLocal(placement.position)
+      setPreviewSegment(target.segment)
       usePlacementPreview.getState().set(
         ChimneyNode.parse({
           ...previewNode,
-          parentId: hit.segment.id,
-          position: [hit.localX, hit.localY, hit.localZ],
-          roofSegmentId: hit.segment.id,
+          parentId: target.segment.id,
+          position: placement.position,
+          roofSegmentId: target.segment.id,
         }),
-        hit.segment,
+        target.segment,
       )
       publishRoofSurfacePlacementGuides({
         roof: event.node as RoofNode,
-        segment: hit.segment,
-        center: [hit.localX, hit.localY, hit.localZ],
-        footprint: roofSurfaceFootprintFromNode(previewNode, { segment: hit.segment }),
+        segment: target.segment,
+        center: placement.position,
+        footprint: roofSurfaceFootprintFromNode(previewNode, { segment: target.segment }),
       })
       event.stopPropagation()
     }
 
     const onClick = (event: RoofEvent) => {
-      const hit = resolveRoofSegmentHit(
-        event.node as RoofNode,
-        event.position[0],
-        event.position[1],
-        event.position[2],
-      )
-      if (!hit) return
-      const placement = resolveChimneyPlacement(
-        hit.segment,
-        previewNode,
-        hit.localX,
-        hit.localZ,
-        event.nativeEvent?.altKey !== true && isGridSnapActive()
-          ? useEditor.getState().gridSnapStep
-          : 0,
-      )
-      if (event.nativeEvent?.altKey !== true && isMagneticSnapActive()) {
-        const snapped = snapRoofSurfaceNodeTarget({
-          target: { ...hit, hit, localX: placement.position[0], localZ: placement.position[2] },
-          node: previewNode,
-        })
-        Object.assign(
-          placement,
-          resolveChimneyPlacement(hit.segment, previewNode, snapped.localX, snapped.localZ),
-        )
-      }
-      hit.localX = placement.position[0]
-      hit.localZ = placement.position[2]
-      setValid(placement.valid || event.nativeEvent?.altKey === true)
-      if (!placement.valid && event.nativeEvent?.altKey !== true) return
+      const resolved = resolve(event)
+      if (!resolved) return
+      const { target, placement, force } = resolved
+      setValid(placement.valid || force)
+      if (!placement.valid && !force) return
 
       const chimney = ChimneyNode.parse({
         ...chimneyDefinition.defaults(),
         name: 'Chimney',
-        roofSegmentId: hit.segment.id,
-        position: [hit.localX, hit.localY, hit.localZ],
+        roofSegmentId: target.segment.id,
+        position: placement.position,
         rotation: 0,
       })
-      sceneApi.upsert(chimney, hit.segment.id as AnyNodeId)
-      sceneApi.markDirty(hit.segment.id as AnyNodeId)
+      sceneApi.upsert(chimney, target.segment.id as AnyNodeId)
+      sceneApi.markDirty(target.segment.id as AnyNodeId)
       setSelection({ selectedIds: [chimney.id] })
       triggerSFX('sfx:item-place')
       const placementPreview = usePlacementPreview.getState()

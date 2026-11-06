@@ -14,7 +14,10 @@ import { useEffect, useMemo, useState } from 'react'
 import * as THREE from 'three'
 import { roofSegmentLocalToBuildingLocal } from '../shared/relative-roof-drag'
 import { RoofAttachmentFallbackPreview } from '../shared/roof-attachment-fallback-preview'
-import { resolveRoofSegmentHit } from '../shared/roof-segment-hit'
+import {
+  resolveRoofSegmentAtSnappedPosition,
+  resolveRoofSegmentHit,
+} from '../shared/roof-segment-hit'
 import { surfaceQuatFromNormal } from '../shared/roof-surface'
 import {
   clearRoofSurfacePlacementGuides,
@@ -52,26 +55,42 @@ export default function BoxVentTool() {
       const hit = resolveRoofSegmentHit(event.node, ...event.position)
       if (!hit) return null
       const force = event.nativeEvent?.altKey === true
+      const gridStep = !force && isGridSnapActive() ? useEditor.getState().gridSnapStep : 0
       let placement = resolveBoxVentPlacement(hit.segment, seed, hit.localX, hit.localZ, {
-        gridStep: !force && isGridSnapActive() ? useEditor.getState().gridSnapStep : 0,
+        gridStep,
         alignDownslope: true,
       })
-      if (!force && isMagneticSnapActive()) {
-        const target = snapRoofSurfaceNodeTarget({
-          target: {
-            ...hit,
-            hit,
-            localX: placement.position[0],
-            localY: placement.position[1],
-            localZ: placement.position[2],
-          },
-          node: { ...seed, rotation: placement.rotation },
-        })
-        placement = resolveBoxVentPlacement(hit.segment, seed, target.localX, target.localZ, {
+      let target = {
+        ...hit,
+        hit,
+        localX: placement.position[0],
+        localY: placement.position[1],
+        localZ: placement.position[2],
+      }
+      if (gridStep > 0) {
+        target = resolveRoofSegmentAtSnappedPosition(event.node, target)
+        placement = resolveBoxVentPlacement(target.segment, seed, target.localX, target.localZ, {
           alignDownslope: true,
         })
       }
-      return { hit, placement, force }
+      if (!force && isMagneticSnapActive()) {
+        target = resolveRoofSegmentAtSnappedPosition(
+          event.node,
+          snapRoofSurfaceNodeTarget({
+            target: {
+              ...target,
+              localX: placement.position[0],
+              localY: placement.position[1],
+              localZ: placement.position[2],
+            },
+            node: { ...seed, rotation: placement.rotation },
+          }),
+        )
+        placement = resolveBoxVentPlacement(target.segment, seed, target.localX, target.localZ, {
+          alignDownslope: true,
+        })
+      }
+      return { target, placement, force }
     }
     const show = (event: RoofEvent) => {
       const resolved = resolve(event)
@@ -79,30 +98,30 @@ export default function BoxVentTool() {
         clear()
         return
       }
-      const { hit, placement, force } = resolved
+      const { target, placement, force } = resolved
       const node = {
         ...seed,
         position: placement.position,
         rotation: placement.rotation,
-        parentId: hit.segment.id,
-        roofSegmentId: hit.segment.id,
+        parentId: target.segment.id,
+        roofSegmentId: target.segment.id,
       }
       const normal = getRoofOuterSurfaceFrameAtPoint(
-        hit.segment,
+        target.segment,
         placement.position[0],
         placement.position[2],
       ).normal
       setPreview({
         node,
-        position: roofSegmentLocalToBuildingLocal(hit.segment.id, placement.position),
+        position: roofSegmentLocalToBuildingLocal(target.segment.id, placement.position),
         normal: surfaceQuatFromNormal(normal, new THREE.Quaternion()),
-        yaw: event.node.rotation + hit.segment.rotation,
+        yaw: event.node.rotation + target.segment.rotation,
         valid: placement.valid || force,
       })
-      usePlacementPreview.getState().set(node, hit.segment)
+      usePlacementPreview.getState().set(node, target.segment)
       publishRoofSurfaceNodePlacementGuides({
         roof: event.node,
-        segment: hit.segment,
+        segment: target.segment,
         center: placement.position,
         node,
       })
@@ -111,7 +130,7 @@ export default function BoxVentTool() {
     const place = (event: RoofEvent) => {
       const resolved = resolve(event)
       if (!resolved) return
-      const { hit, placement, force } = resolved
+      const { target, placement, force } = resolved
       if (!placement.valid && !force) {
         show(event)
         return
@@ -119,11 +138,12 @@ export default function BoxVentTool() {
       const node = BoxVentNode.parse({
         ...seed,
         id: undefined,
-        roofSegmentId: hit.segment.id,
+        roofSegmentId: target.segment.id,
         position: placement.position,
         rotation: placement.rotation,
       })
-      sceneApi.upsert(node, hit.segment.id as AnyNodeId)
+      sceneApi.upsert(node, target.segment.id as AnyNodeId)
+      sceneApi.markDirty(target.segment.id as AnyNodeId)
       useViewer.getState().setSelection({ selectedIds: [node.id] })
       triggerSFX('sfx:item-place')
       clear()

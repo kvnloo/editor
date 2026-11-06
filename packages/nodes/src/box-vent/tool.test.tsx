@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test'
 import {
+  type AnyNodeId,
   BuildingNode,
   createSceneApi,
   emitter,
@@ -20,6 +21,7 @@ import {
 import { useViewer } from '@pascal-app/viewer'
 import { act, create } from '@react-three/test-renderer'
 import * as THREE from 'three'
+import { chimneyDefinition } from '../chimney'
 import { boxVentDefinition, buildBoxVentGeometry } from './index'
 
 test('box-vent placement matches its preview, honors grid mode and blocks unsupported drops', async () => {
@@ -45,13 +47,21 @@ test('box-vent placement matches its preview, honors grid mode and blocks unsupp
   })
   useViewer.getState().setSelection({ buildingId: building.id, levelId: level.id })
   sceneRegistry.nodes.set(segment.id, new THREE.Group())
+  const dirtyNotifications: AnyNodeId[] = []
+  const baseApi = createSceneApi(useScene)
   const { default: Tool } = await boxVentDefinition.tool!()
   const renderer = await create(
     <RegistryToolProvider
       value={{
         activeLevelId: level.id,
         isCameraDragging: () => false,
-        sceneApi: createSceneApi(useScene),
+        sceneApi: {
+          ...baseApi,
+          markDirty: (id: AnyNodeId) => {
+            dirtyNotifications.push(id)
+            baseApi.markDirty(id)
+          },
+        },
         selectNode: () => {},
         unit: 'metric',
       }}
@@ -80,6 +90,7 @@ test('box-vent placement matches its preview, honors grid mode and blocks unsupp
     await act(async () => emitter.emit('roof:click', event))
     const placed = Object.values(useScene.getState().nodes).find((node) => node.type === 'box-vent')
     expect(useScene.getState().dirtyNodes.has(segment.id)).toBe(true)
+    expect(dirtyNotifications).toContain(segment.id)
     expect(placed).toBeDefined()
     if (placed?.type !== 'box-vent') throw new Error('Missing box vent')
     expect(preview.position).toEqual(placed.position)
@@ -113,6 +124,117 @@ test('box-vent placement matches its preview, honors grid mode and blocks unsupp
     sceneRegistry.nodes.delete(segment.id)
     useScene.setState(savedScene)
     useViewer.getState().setSelection(savedSelection)
+    usePlacementPreview.getState().clear()
+  }
+})
+
+test('roof accessories snap to the actual neighbouring segment and dirty that host', async () => {
+  const restoreRegistry = nodeRegistry._snapshot()
+  if (!nodeRegistry.get('box-vent')) registerNode(boxVentDefinition)
+  if (!nodeRegistry.get('chimney')) registerNode(chimneyDefinition)
+  const savedEditor = useEditor.getState()
+  const savedScene = useScene.getState()
+  const savedSelection = useViewer.getState().selection
+  const building = BuildingNode.parse({})
+  const level = LevelNode.parse({ parentId: building.id })
+  const roof = RoofNode.parse({ parentId: level.id })
+  const source = RoofSegmentNode.parse({
+    parentId: roof.id,
+    roofType: 'flat',
+    width: 8,
+    depth: 8,
+    overhang: 0,
+    gableOverhang: 0,
+    wallThickness: 0,
+  })
+  const neighbour = RoofSegmentNode.parse({ ...source, id: undefined, parentId: roof.id })
+  roof.children = [source.id, neighbour.id]
+  level.children = [roof.id]
+  building.children = [level.id]
+  const neighbourObject = new THREE.Group()
+  neighbourObject.position.x = 7
+  sceneRegistry.nodes.set(building.id, new THREE.Group())
+  sceneRegistry.nodes.set(source.id, new THREE.Group())
+  sceneRegistry.nodes.set(neighbour.id, neighbourObject)
+  let renderer: Awaited<ReturnType<typeof create>> | null = null
+
+  try {
+    for (const definition of [boxVentDefinition, chimneyDefinition]) {
+      useScene.setState({
+        nodes: {
+          [building.id]: building,
+          [level.id]: level,
+          [roof.id]: roof,
+          [source.id]: source,
+          [neighbour.id]: neighbour,
+        },
+        rootNodeIds: [building.id],
+        dirtyNodes: new Set(),
+        readOnly: false,
+      })
+      useViewer.getState().setSelection({ buildingId: building.id, levelId: level.id })
+      useEditor.setState({ mode: 'build', tool: definition.kind, gridSnapStep: 1.1 })
+      useEditor.getState().setSnappingMode('item', 'grid')
+      const marks: AnyNodeId[] = []
+      const baseApi = createSceneApi(useScene)
+      const { default: Tool } = await definition.tool!()
+      renderer = await create(
+        <RegistryToolProvider
+          value={{
+            activeLevelId: level.id,
+            isCameraDragging: () => false,
+            sceneApi: {
+              ...baseApi,
+              markDirty: (id: AnyNodeId) => {
+                marks.push(id)
+                baseApi.markDirty(id)
+              },
+            },
+            selectNode: () => {},
+            unit: 'metric',
+          }}
+        >
+          <Tool />
+        </RegistryToolProvider>,
+      )
+      const event = {
+        node: roof,
+        position: [3.95, 3, 1.1] as [number, number, number],
+        stopPropagation: () => {},
+      }
+      await act(async () => emitter.emit('roof:move', event))
+      const preview = usePlacementPreview.getState().node
+      if (preview?.type !== 'box-vent' && preview?.type !== 'chimney') {
+        throw new Error('Missing roof accessory preview')
+      }
+      expect(preview.roofSegmentId).toBe(neighbour.id)
+      expect(preview.parentId).toBe(neighbour.id)
+
+      await act(async () => emitter.emit('roof:click', event))
+      const placed = Object.values(useScene.getState().nodes).find(
+        (n) => n.type === definition.kind,
+      )
+      if (placed?.type !== 'box-vent' && placed?.type !== 'chimney') {
+        throw new Error('Missing roof accessory')
+      }
+      expect(placed.parentId).toBe(neighbour.id)
+      expect(placed.roofSegmentId).toBe(neighbour.id)
+      expect(placed.position[0]).toBeCloseTo(-2.6)
+      expect(placed.position[2]).toBeCloseTo(1.1)
+      expect(marks).toContain(neighbour.id)
+      await renderer.unmount()
+      renderer = null
+      usePlacementPreview.getState().clear()
+    }
+  } finally {
+    if (renderer) await renderer.unmount()
+    restoreRegistry()
+    useEditor.setState(savedEditor)
+    useScene.setState(savedScene)
+    useViewer.getState().setSelection(savedSelection)
+    sceneRegistry.nodes.delete(building.id)
+    sceneRegistry.nodes.delete(source.id)
+    sceneRegistry.nodes.delete(neighbour.id)
     usePlacementPreview.getState().clear()
   }
 })
