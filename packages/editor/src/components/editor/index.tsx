@@ -52,6 +52,7 @@ import { useCeilingEditSessionOwner } from '../../lib/ceiling-edit-session'
 import { showsWholeBuilding, useEditorLevelDisplay } from '../../lib/editor-level-display'
 import { isSceneView } from '../../lib/editor-views'
 import { initFinishScriptRefresh } from '../../lib/geometry-script/finish-scripts'
+import type { AuthorizeGigapixelExport } from '../../lib/gigapixel-export-authority'
 import { useGestureLifecycleOwner } from '../../lib/gesture-lifecycle'
 import { shouldShowEditingControls } from '../../lib/interaction/overlay-policy'
 import {
@@ -293,6 +294,8 @@ export interface EditorProps {
   onLoaderChange?: (visible: boolean) => void
 
   // Thumbnail
+  /** Host verifies export permission and supplies a project-bound, writable destination. */
+  authorizeGigapixelExport?: AuthorizeGigapixelExport
   onThumbnailCapture?: (blob: Blob, cameraData: SnapshotCameraData) => void
 
   /** Viewer diagnostics for the host's error-reporter trail; see `<Viewer onBreadcrumb>`. */
@@ -917,6 +920,7 @@ const ViewerSceneContent = memo(function ViewerSceneContent({
   isFirstPersonMode,
   isXRMode,
   isStudioMode,
+  authorizeGigapixelExport,
   onThumbnailCapture,
   viewerSceneSlot,
   presentationsReady,
@@ -926,6 +930,7 @@ const ViewerSceneContent = memo(function ViewerSceneContent({
   isFirstPersonMode: boolean
   isXRMode: boolean
   isStudioMode: boolean
+  authorizeGigapixelExport?: AuthorizeGigapixelExport
   onThumbnailCapture?: (blob: Blob, cameraData: SnapshotCameraData) => void
   viewerSceneSlot?: ReactNode
   presentationsReady: boolean
@@ -1176,6 +1181,7 @@ const ViewerCanvas = memo(function ViewerCanvas({
   loadingOverlay,
   sceneReadyKey,
   onSceneReadyChange,
+  authorizeGigapixelExport,
   onThumbnailCapture,
   onViewerBreadcrumb,
   presentationsReady,
@@ -1195,6 +1201,7 @@ const ViewerCanvas = memo(function ViewerCanvas({
   loadingOverlay: ReactNode
   sceneReadyKey: number
   onSceneReadyChange: (ready: boolean) => void
+  authorizeGigapixelExport?: AuthorizeGigapixelExport
   onThumbnailCapture?: (blob: Blob, cameraData: SnapshotCameraData) => void
   onViewerBreadcrumb?: ViewerBreadcrumbHandler
   presentationsReady: boolean
@@ -1375,6 +1382,7 @@ const ViewerCanvas = memo(function ViewerCanvas({
                   isXRMode={immersive != null}
                   isStudioMode={isStudioMode}
                   isVersionPreviewMode={isVersionPreviewMode}
+                  authorizeGigapixelExport={authorizeGigapixelExport}
                   onThumbnailCapture={onThumbnailCapture}
                   presentationsReady={presentationsReady}
                   viewerSceneSlot={viewerSceneSlot}
@@ -1525,6 +1533,7 @@ function EditorContent({
   isLoading = false,
   loadingSlot,
   onLoaderChange,
+  authorizeGigapixelExport,
   onThumbnailCapture,
   onViewerBreadcrumb,
   disablePostFx = false,
@@ -1812,7 +1821,10 @@ function EditorContent({
       <StairEditSystem />
       {isFirstPersonMode && <FirstPersonControls />}
       <CustomCameraControls />
-      <ThumbnailGenerator onThumbnailCapture={onThumbnailCapture} />
+      <ThumbnailGenerator
+        authorizeGigapixelExport={authorizeGigapixelExport}
+        onThumbnailCapture={onThumbnailCapture}
+      />
       <VectorEdgeExtractor />
       <InteractiveSystem />
       {presentationsReady ? <ViewerPresentations /> : null}
@@ -1841,6 +1853,7 @@ function EditorContent({
       isVersionPreviewMode={isVersionPreviewMode}
       loadingOverlay={loadingOverlay}
       onSceneReadyChange={handleSceneReadyChange}
+      authorizeGigapixelExport={authorizeGigapixelExport}
       onThumbnailCapture={onThumbnailCapture}
       onViewerBreadcrumb={onViewerBreadcrumb}
       presentationsReady={presentationsReady}

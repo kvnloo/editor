@@ -13,6 +13,7 @@
     "./distribution": "./src/components/tools/distribution/distribution-public.ts",
     "./deep-zoom-zip": "./src/lib/deep-zoom-zip.ts",
     "./gigapixel-capture": "./src/lib/gigapixel-capture.ts",
+    "./gigapixel-export-authority": "./src/lib/gigapixel-export-authority.ts",
     "./gigapixel-artifact-sink": "./src/lib/gigapixel-artifact-sink.ts"
   },
   "scripts": {

@@ -44,6 +44,12 @@ import * as THREE from 'three'
 import { CanvasTarget, ClippingGroup, type WebGPURenderer } from 'three/webgpu'
 import { EDITOR_LAYER } from '../../lib/constants'
 import { createBrowserDeepZoomZipArtifactHost } from '../../lib/deep-zoom-zip'
+import {
+  assertGigapixelExportStillActive,
+  type AuthorizeGigapixelExport,
+  GigapixelExportDenied,
+  requireGigapixelExportAuthority,
+} from '../../lib/gigapixel-export-authority'
 import { createStagedGigapixelArtifactSink } from '../../lib/gigapixel-artifact-sink'
 import { streamGigapixelCapture } from '../../lib/gigapixel-capture'
 import {
@@ -77,6 +83,7 @@ export interface SnapshotCameraData {
 
 interface ThumbnailGeneratorProps {
   onThumbnailCapture?: (blob: Blob, cameraData: SnapshotCameraData) => void
+  authorizeGigapixelExport?: AuthorizeGigapixelExport
 }
 
 /** Metres ahead of a controls-less camera to place the stored snapshot target. */
@@ -625,7 +632,10 @@ export function capturesOrthographically(
   return !event.perspective && mainCamera instanceof THREE.OrthographicCamera
 }
 
-export const ThumbnailGenerator = ({ onThumbnailCapture }: ThumbnailGeneratorProps) => {
+export const ThumbnailGenerator = ({
+  onThumbnailCapture,
+  authorizeGigapixelExport,
+}: ThumbnailGeneratorProps) => {
   const gl = useThree((state) => state.gl)
   const scene = useThree((state) => state.scene)
   const atmosphere = useSceneAtmosphere()
@@ -636,6 +646,7 @@ export const ThumbnailGenerator = ({ onThumbnailCapture }: ThumbnailGeneratorPro
   const isGenerating = useRef(false)
   const captureQueue = useRef(createSnapshotQueue())
   const onThumbnailCaptureRef = useRef(onThumbnailCapture)
+  const authorizeGigapixelExportRef = useRef(authorizeGigapixelExport)
 
   const thumbnailCameraRef = useRef<THREE.PerspectiveCamera | null>(null)
   const pipelineRef = useRef<SnapshotPipeline | null>(null)
@@ -651,6 +662,9 @@ export const ThumbnailGenerator = ({ onThumbnailCapture }: ThumbnailGeneratorPro
   useEffect(() => {
     onThumbnailCaptureRef.current = onThumbnailCapture
   }, [onThumbnailCapture])
+  useEffect(() => {
+    authorizeGigapixelExportRef.current = authorizeGigapixelExport
+  }, [authorizeGigapixelExport])
 
   // Reuse the camera and snapshot graph until the active atmosphere source changes.
   useEffect(() => {
@@ -756,7 +770,6 @@ export const ThumbnailGenerator = ({ onThumbnailCapture }: ThumbnailGeneratorPro
         async () => {
           const version = captureVersion.current
           const onCapture = onThumbnailCaptureRef.current
-          if (!onCapture) throw new Error('Snapshot storage is unavailable')
           if (cameraPose && event.projectId !== useViewer.getState().projectId)
             throw new Error('The active project changed before capture')
           const perspectiveCamera = thumbnailCameraRef.current
@@ -781,6 +794,21 @@ export const ThumbnailGenerator = ({ onThumbnailCapture }: ThumbnailGeneratorPro
             (Math.max(...requestedSize) > MAX_CAPTURE_EDGE ||
               requestedSize[0] * requestedSize[1] > limits.maxPixels)
           const [width, height] = gigapixel ? requestedSize : boundedSize
+          // The host approves this active project and destination before any capture
+          // setup, GPU readback, OPFS lookup, or private staging directory creation.
+          const exportAuthority = gigapixel
+            ? await requireGigapixelExportAuthority(
+                () => useViewer.getState().projectId,
+                event.projectId,
+                authorizeGigapixelExportRef.current,
+              )
+            : null
+          if (!onCapture) {
+            if (gigapixel) {
+              throw new GigapixelExportDenied('export_unavailable', 'Snapshot delivery is unavailable')
+            }
+            throw new Error('Snapshot storage is unavailable')
+          }
           // a supersampled picture is encoded at the size it could render (the
           // caller asked for canvas × supersample, maybe past this GPU's limits)
           const encodeSize = supersample > 1 ? { w: width, h: height } : standardSize
@@ -1033,8 +1061,13 @@ export const ThumbnailGenerator = ({ onThumbnailCapture }: ThumbnailGeneratorPro
             // a sheet's picture goes to the sheets lossless: they pick its print encoding
             const mime = pose ? 'image/png' : undefined
             if (gigapixel) {
+              if (!exportAuthority) {
+                throw new GigapixelExportDenied('export_unavailable', 'DeepZoom export is not authorized')
+              }
+              assertGigapixelExportStillActive(exportAuthority, () => useViewer.getState().projectId)
               if (!pipeline) throw new Error('Snapshot renderer is not ready. Try again.')
               const host = await createBrowserDeepZoomZipArtifactHost({
+                directory: exportAuthority.directory,
                 requireStagedFile: true,
               })
               const filename = 'capture-' + globalThis.crypto.randomUUID() + '.deepzoom.zip'
@@ -1057,9 +1090,14 @@ export const ThumbnailGenerator = ({ onThumbnailCapture }: ThumbnailGeneratorPro
                     if (
                       version !== captureVersion.current ||
                       perspectiveCamera !== thumbnailCameraRef.current ||
-                      (cameraPose && event.projectId !== useViewer.getState().projectId)
+                      useViewer.getState().projectId !== exportAuthority.projectId
                     ) {
-                      controller.abort()
+                      controller.abort(
+                        new GigapixelExportDenied(
+                          'permission_denied',
+                          'The active project changed during DeepZoom export',
+                        ),
+                      )
                     }
                     controller.signal.throwIfAborted()
                     const shot = captureSnapshotScene((restore) => {
@@ -1140,9 +1178,7 @@ export const ThumbnailGenerator = ({ onThumbnailCapture }: ThumbnailGeneratorPro
                 ) {
                   throw new Error('The scene changed during capture. Try again.')
                 }
-                if (cameraPose && event.projectId !== useViewer.getState().projectId) {
-                  throw new Error('The active project changed during capture')
-                }
+                assertGigapixelExportStillActive(exportAuthority, () => useViewer.getState().projectId)
                 await within(
                   Promise.resolve(deliverSnapshot(event, blob, cameraData, onCapture)),
                   CAPTURE_SETTLE_MS,
