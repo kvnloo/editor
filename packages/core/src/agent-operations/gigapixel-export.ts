@@ -33,7 +33,7 @@ export type GigapixelExportHost = {
   exportZip(request: {
     grant: GigapixelExportGrant
     signal?: AbortSignal
-  }): Promise<GigapixelExportArtifact>
+  }): Promise<GigapixelExportArtifact & { rollback?: () => Promise<void> }>
 }
 
 /**
@@ -58,6 +58,7 @@ export async function executeGigapixelExport(
     )
   }
 
+  let rollback: (() => Promise<void>) | undefined
   try {
     signal?.throwIfAborted()
     const currentProjectId = () => host.getActiveProjectId()
@@ -69,9 +70,11 @@ export async function executeGigapixelExport(
     signal?.throwIfAborted()
     assertGigapixelExportStillActive(grant, currentProjectId)
     const artifact = await host.exportZip({ grant, signal })
+    rollback = artifact.rollback
     assertGigapixelExportStillActive(grant, currentProjectId)
     signal?.throwIfAborted()
-    const valid = artifactSchema.safeParse(artifact)
+    const { rollback: _rollback, ...reported } = artifact
+    const valid = artifactSchema.safeParse(reported)
     if (!valid.success) {
       throw new AgentRefusal(
         'export_unavailable',
@@ -80,6 +83,13 @@ export async function executeGigapixelExport(
     }
     return { status: 'exported', projectId: grant.projectId, ...valid.data }
   } catch (error) {
+    if (rollback) {
+      try {
+        await rollback()
+      } catch {
+        throw new AgentRefusal('export_unavailable', 'DeepZoom ZIP rollback failed.')
+      }
+    }
     if (error instanceof GigapixelExportDenied) {
       throw new AgentRefusal(error.code, error.message)
     }

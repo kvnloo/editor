@@ -53,6 +53,7 @@ import { showsWholeBuilding, useEditorLevelDisplay } from '../../lib/editor-leve
 import { isSceneView } from '../../lib/editor-views'
 import { initFinishScriptRefresh } from '../../lib/geometry-script/finish-scripts'
 import type { AuthorizeGigapixelExport } from '../../lib/gigapixel-export-authority'
+import type { EditorGigapixelExportHost } from '../../lib/gigapixel-editor-executor'
 import { useGestureLifecycleOwner } from '../../lib/gesture-lifecycle'
 import { shouldShowEditingControls } from '../../lib/interaction/overlay-policy'
 import {
@@ -296,6 +297,7 @@ export interface EditorProps {
   // Thumbnail
   /** Host verifies export permission and supplies a project-bound, writable destination. */
   authorizeGigapixelExport?: AuthorizeGigapixelExport
+  gigapixelExportHost?: EditorGigapixelExportHost
   onThumbnailCapture?: (blob: Blob, cameraData: SnapshotCameraData) => void
 
   /** Viewer diagnostics for the host's error-reporter trail; see `<Viewer onBreadcrumb>`. */
@@ -921,6 +923,7 @@ const ViewerSceneContent = memo(function ViewerSceneContent({
   isXRMode,
   isStudioMode,
   authorizeGigapixelExport,
+  gigapixelExportHost,
   onThumbnailCapture,
   viewerSceneSlot,
   presentationsReady,
@@ -931,6 +934,7 @@ const ViewerSceneContent = memo(function ViewerSceneContent({
   isXRMode: boolean
   isStudioMode: boolean
   authorizeGigapixelExport?: AuthorizeGigapixelExport
+  gigapixelExportHost?: EditorGigapixelExportHost
   onThumbnailCapture?: (blob: Blob, cameraData: SnapshotCameraData) => void
   viewerSceneSlot?: ReactNode
   presentationsReady: boolean
@@ -975,7 +979,15 @@ const ViewerSceneContent = memo(function ViewerSceneContent({
       {isCaptureMode && !isXRMode && <CaptureCameraRig />}
       {!isXRMode && <CustomCameraControls />}
       {!isXRMode && <FollowPascal />}
-      {!isXRMode && <ThumbnailGenerator onThumbnailCapture={onThumbnailCapture} />}
+      {!isXRMode && (
+        <ThumbnailGenerator
+          authorizeGigapixelExport={
+            authorizeGigapixelExport ?? gigapixelExportHost?.authorizeGigapixelExport
+          }
+          gigapixelExportHost={gigapixelExportHost}
+          onThumbnailCapture={onThumbnailCapture}
+        />
+      )}
       {!isXRMode && <VectorEdgeExtractor />}
       {!(isFirstPersonMode || isXRMode) && <SiteEdgeLabels />}
       {presentationsReady ? <ViewerPresentations /> : null}
@@ -1182,6 +1194,7 @@ const ViewerCanvas = memo(function ViewerCanvas({
   sceneReadyKey,
   onSceneReadyChange,
   authorizeGigapixelExport,
+  gigapixelExportHost,
   onThumbnailCapture,
   onViewerBreadcrumb,
   presentationsReady,
@@ -1202,6 +1215,7 @@ const ViewerCanvas = memo(function ViewerCanvas({
   sceneReadyKey: number
   onSceneReadyChange: (ready: boolean) => void
   authorizeGigapixelExport?: AuthorizeGigapixelExport
+  gigapixelExportHost?: EditorGigapixelExportHost
   onThumbnailCapture?: (blob: Blob, cameraData: SnapshotCameraData) => void
   onViewerBreadcrumb?: ViewerBreadcrumbHandler
   presentationsReady: boolean
@@ -1383,6 +1397,7 @@ const ViewerCanvas = memo(function ViewerCanvas({
                   isStudioMode={isStudioMode}
                   isVersionPreviewMode={isVersionPreviewMode}
                   authorizeGigapixelExport={authorizeGigapixelExport}
+                  gigapixelExportHost={gigapixelExportHost}
                   onThumbnailCapture={onThumbnailCapture}
                   presentationsReady={presentationsReady}
                   viewerSceneSlot={viewerSceneSlot}
@@ -1534,6 +1549,7 @@ function EditorContent({
   loadingSlot,
   onLoaderChange,
   authorizeGigapixelExport,
+  gigapixelExportHost,
   onThumbnailCapture,
   onViewerBreadcrumb,
   disablePostFx = false,
@@ -1822,7 +1838,10 @@ function EditorContent({
       {isFirstPersonMode && <FirstPersonControls />}
       <CustomCameraControls />
       <ThumbnailGenerator
-        authorizeGigapixelExport={authorizeGigapixelExport}
+        authorizeGigapixelExport={
+          authorizeGigapixelExport ?? gigapixelExportHost?.authorizeGigapixelExport
+        }
+        gigapixelExportHost={gigapixelExportHost}
         onThumbnailCapture={onThumbnailCapture}
       />
       <VectorEdgeExtractor />
@@ -1854,6 +1873,7 @@ function EditorContent({
       loadingOverlay={loadingOverlay}
       onSceneReadyChange={handleSceneReadyChange}
       authorizeGigapixelExport={authorizeGigapixelExport}
+      gigapixelExportHost={gigapixelExportHost}
       onThumbnailCapture={onThumbnailCapture}
       onViewerBreadcrumb={onViewerBreadcrumb}
       presentationsReady={presentationsReady}

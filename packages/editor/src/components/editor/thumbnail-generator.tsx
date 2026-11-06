@@ -9,7 +9,11 @@ import {
   type ThumbnailGenerateEvent,
   useScene,
 } from '@pascal-app/core'
-import { sceneViewInterior } from '@pascal-app/core/agent-operations'
+import {
+  type GigapixelExportGrant,
+  type GigapixelExportHost,
+  sceneViewInterior,
+} from '@pascal-app/core/agent-operations'
 import {
   computeHeroFraming,
   createSnapshotPipeline,
@@ -51,6 +55,7 @@ import {
   requireGigapixelExportAuthority,
 } from '../../lib/gigapixel-export-authority'
 import { createStagedGigapixelArtifactSink } from '../../lib/gigapixel-artifact-sink'
+import type { EditorGigapixelExportHost } from '../../lib/gigapixel-editor-executor'
 import { streamGigapixelCapture } from '../../lib/gigapixel-capture'
 import {
   applySnapshotCapturePose,
@@ -84,6 +89,7 @@ export interface SnapshotCameraData {
 interface ThumbnailGeneratorProps {
   onThumbnailCapture?: (blob: Blob, cameraData: SnapshotCameraData) => void
   authorizeGigapixelExport?: AuthorizeGigapixelExport
+  gigapixelExportHost?: EditorGigapixelExportHost
 }
 
 /** Metres ahead of a controls-less camera to place the stored snapshot target. */
@@ -635,6 +641,7 @@ export function capturesOrthographically(
 export const ThumbnailGenerator = ({
   onThumbnailCapture,
   authorizeGigapixelExport,
+  gigapixelExportHost,
 }: ThumbnailGeneratorProps) => {
   const gl = useThree((state) => state.gl)
   const scene = useThree((state) => state.scene)
@@ -733,7 +740,10 @@ export const ThumbnailGenerator = ({
   }, [gl, scene, atmosphere])
 
   const generate = useCallback(
-    async (event: ThumbnailGenerateEvent) => {
+    async (
+      event: ThumbnailGenerateEvent,
+      agent?: { grant: GigapixelExportGrant; signal?: AbortSignal },
+    ) => {
       const { captureMode, cropRegion, standardSize, cameraPose, requestId, interior } = event
       const snapLevels = event.snapLevels === true
       const transparent = event.transparent === true
@@ -764,12 +774,24 @@ export const ThumbnailGenerator = ({
         busy: isGenerating.current,
         callback: !!onThumbnailCaptureRef.current,
       })
+      let exported: Awaited<ReturnType<GigapixelExportHost['exportZip']>> | undefined
       await runSnapshotCapture(
         requestId,
         isGenerating,
         async () => {
           const version = captureVersion.current
-          const onCapture = onThumbnailCaptureRef.current
+          if (agent) {
+            agent.signal?.throwIfAborted()
+            assertGigapixelExportStillActive(agent.grant, () => useViewer.getState().projectId)
+          }
+          const onCapture = agent
+            ? (blob: Blob, data: SnapshotCameraData) => {
+                if (!data.artifact || blob.size !== data.artifact.bytes) {
+                  throw new Error('DeepZoom ZIP receipt does not match its published file')
+                }
+                agent.signal?.throwIfAborted()
+              }
+            : onThumbnailCaptureRef.current
           if (cameraPose && event.projectId !== useViewer.getState().projectId)
             throw new Error('The active project changed before capture')
           const perspectiveCamera = thumbnailCameraRef.current
@@ -788,21 +810,29 @@ export const ThumbnailGenerator = ({
           const pose = ortho ?? perspective
           const limits = captureLimits(gl)
           const boundedSize = captureDimensions(canvasSize, event, limits.maxPixels)
-          const requestedSize = pose ? requestedPictureDimensions(canvasSize, event) : boundedSize
+          const agentScale = 16_384 / Math.max(...canvasSize)
+          const requestedSize: [number, number] = agent
+            ? [Math.round(canvasSize[0] * agentScale), Math.round(canvasSize[1] * agentScale)]
+            : pose
+              ? requestedPictureDimensions(canvasSize, event)
+              : boundedSize
           const gigapixel =
-            !!pose &&
-            (Math.max(...requestedSize) > MAX_CAPTURE_EDGE ||
-              requestedSize[0] * requestedSize[1] > limits.maxPixels)
+            !!agent ||
+            (!!pose &&
+              (Math.max(...requestedSize) > MAX_CAPTURE_EDGE ||
+                requestedSize[0] * requestedSize[1] > limits.maxPixels))
           const [width, height] = gigapixel ? requestedSize : boundedSize
           // The host approves this active project and destination before any capture
           // setup, GPU readback, OPFS lookup, or private staging directory creation.
-          const exportAuthority = gigapixel
-            ? await requireGigapixelExportAuthority(
-                () => useViewer.getState().projectId,
-                event.projectId,
-                authorizeGigapixelExportRef.current,
-              )
-            : null
+          const exportAuthority =
+            agent?.grant ??
+            (gigapixel
+              ? await requireGigapixelExportAuthority(
+                  () => useViewer.getState().projectId,
+                  event.projectId,
+                  authorizeGigapixelExportRef.current,
+                )
+              : null)
           if (!onCapture) {
             if (gigapixel) {
               throw new GigapixelExportDenied('export_unavailable', 'Snapshot delivery is unavailable')
@@ -814,10 +844,10 @@ export const ThumbnailGenerator = ({
           const encodeSize = supersample > 1 ? { w: width, h: height } : standardSize
           // a background tab draws no frames and (on the WebGL backend) never
           // finishes a readback: a sheet's capture says so at once
-          if (pose && isTabHidden()) throw new Error(HIDDEN_TAB)
+          if ((pose || agent) && isTabHidden()) throw new Error(HIDDEN_TAB)
           // a sheet's capture runs frames by hand in a scene set up for the
           // picture: the viewport keeps its last frame meanwhile
-          const releaseLiveFrame = pose ? holdLiveFrame(HOLD_MAX_MS) : null
+          const releaseLiveFrame = pose || agent ? holdLiveFrame(HOLD_MAX_MS) : null
 
           try {
             const edges = edgesOverride ?? (transparent ? 'off' : useViewer.getState().edges)
@@ -947,7 +977,7 @@ export const ThumbnailGenerator = ({
               ...(isOrtho && { zoom: (mainCamera as THREE.OrthographicCamera).zoom }),
             }
 
-            if (pose) {
+            if (pose || agent) {
               // a sheet's capture: the house as built — never a half-built scene
               // or an item's loading placeholder (the cover once showed striped
               // boxes through a white roof, 2026-09-23) — then the viewer's own
@@ -1073,6 +1103,9 @@ export const ThumbnailGenerator = ({
               const filename = 'capture-' + globalThis.crypto.randomUUID() + '.deepzoom.zip'
               const sink = await createStagedGigapixelArtifactSink(host, filename)
               const controller = new AbortController()
+              const abortFromAgent = () => controller.abort(agent?.signal?.reason)
+              agent?.signal?.addEventListener('abort', abortFromAgent, { once: true })
+              if (agent?.signal?.aborted) abortFromAgent()
               activeGigapixelCapture.current = controller
               try {
                 const stats = await streamGigapixelCapture(
@@ -1184,6 +1217,9 @@ export const ThumbnailGenerator = ({
                   CAPTURE_SETTLE_MS,
                   'The snapshot host never took the DeepZoom archive.',
                 )
+                if (agent) {
+                  exported = { ...cameraData.artifact, rollback: () => sink.rollback() }
+                }
                 return
               } catch (error) {
                 try {
@@ -1196,6 +1232,7 @@ export const ThumbnailGenerator = ({
                 }
                 throw error
               } finally {
+                agent?.signal?.removeEventListener('abort', abortFromAgent)
                 if (activeGigapixelCapture.current === controller) {
                   activeGigapixelCapture.current = null
                 }
@@ -1436,10 +1473,25 @@ export const ThumbnailGenerator = ({
           }
         },
         (failure) => emitter.emit('snapshot:capture-failed', failure),
+        !!agent,
       )
+      return exported
     },
     [gl, scene, getThree, orthoPipeline, advance, clock],
   )
+
+  useEffect(() => {
+    if (!gigapixelExportHost) return
+    return gigapixelExportHost.attachCapture(async ({ grant, signal }) => {
+      const event: ThumbnailGenerateEvent = { projectId: grant.projectId, captureMode: 'standard' }
+      let artifact: Awaited<ReturnType<GigapixelExportHost['exportZip']>> | undefined
+      await captureQueue.current(event, async () => {
+        artifact = await generate(event, { grant, signal })
+      })
+      if (!artifact) throw new Error('DeepZoom export did not produce an artifact')
+      return artifact
+    })
+  }, [generate, gigapixelExportHost])
 
   // A run of captures (a sheet's pictures, an agent's view) sets the shared
   // scene up for its pictures — the finished presentation, the ground hidden —

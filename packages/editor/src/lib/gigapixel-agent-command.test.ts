@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test'
+import { executeGigapixelExport } from '@pascal-app/core/agent-operations'
+import { createEditorGigapixelExportHost } from '@pascal-app/editor/gigapixel-editor-executor'
 import {
   type GigapixelExportHost,
   runHostedGigapixelExport,
@@ -167,4 +169,38 @@ describe('hosted command using the shared gigapixel export operation', () => {
     expect(activity.authorizationCalls).toBe(0)
     expect(activity.captures).toBe(0)
   })
+  test('the mounted executor uses one authority and retracts a switched-project ZIP', async () => {
+    const activity = state()
+    const producer = hostFor(activity)
+    const host = createEditorGigapixelExportHost({
+      getActiveProjectId: producer.getActiveProjectId,
+      authorizeGigapixelExport: producer.authorizeGigapixelExport,
+    })
+    await expect(runHostedGigapixelExport({}, host)).rejects.toMatchObject({
+      code: 'export_unavailable',
+    })
+    let rollbacks = 0
+    const detach = host.attachCapture(async (request) => {
+      const result = await producer.exportZip(request)
+      if (activity.captures === 3) activity.active = 'project-b'
+      return { ...result, rollback: async () => { rollbacks++ } }
+    })
+    const hosted = await runHostedGigapixelExport({}, host)
+    expect(hosted).toEqual(await executeGigapixelExport({}, host))
+    expect(hosted).toMatchObject({ status: 'exported', tileCount: 5 })
+    expect('rollback' in hosted).toBe(false)
+    expect(activity.tileReads).toBe(2)
+    await expect(runHostedGigapixelExport({}, host)).rejects.toMatchObject({
+      code: 'permission_denied',
+    })
+    expect(rollbacks).toBe(1)
+    expect(activity.captures).toBe(3)
+    detach()
+    activity.active = 'project-a'
+    await expect(runHostedGigapixelExport({}, host)).rejects.toMatchObject({
+      code: 'export_unavailable',
+    })
+    expect(activity.captures).toBe(3)
+  })
+
 })

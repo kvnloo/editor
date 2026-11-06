@@ -15,6 +15,7 @@
     "./gigapixel-capture": "./src/lib/gigapixel-capture.ts",
     "./gigapixel-export-authority": "./src/lib/gigapixel-export-authority.ts",
     "./gigapixel-agent-command": "./src/lib/gigapixel-agent-command.ts",
+    "./gigapixel-editor-executor": "./src/lib/gigapixel-editor-executor.ts",
     "./gigapixel-artifact-sink": "./src/lib/gigapixel-artifact-sink.ts"
   },
   "scripts": {
