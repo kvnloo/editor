@@ -208,6 +208,19 @@ export const MovePipeSegmentTool: React.FC<{ node: AnyNode }> = ({ node }) => {
       connectivity?.preview({ path: nextPath })
     }
 
+    const finishWithoutCommit = (consumeCancel: boolean) => {
+      connectivity?.clear()
+      if (existedAtStart) {
+        setMeshHidden(false)
+        useViewer.getState().setSelection({ selectedIds: [nodeId] })
+      }
+      useAlignmentGuides.getState().clear()
+      useScene.temporal.getState().resume()
+      if (consumeCancel) markToolCancelConsumed()
+      useEditor.getState().setMovingNodeOrigin('3d')
+      useEditor.getState().setMovingNode(null)
+    }
+
     const commit = (event: GridEvent) => {
       if (committed) return
       if (Date.now() - activatedAtRef.current < 150) {
@@ -220,7 +233,12 @@ export const MovePipeSegmentTool: React.FC<{ node: AnyNode }> = ({ node }) => {
       }
       const finalPath = previewPathRef.current
       const gradeUpdates = connectivity?.commitUpdates({ path: finalPath }) ?? []
-      if (!pipeUpdatesPreserveGrades(useScene.getState().nodes, gradeUpdates)) return
+      if (!pipeUpdatesPreserveGrades(useScene.getState().nodes, gradeUpdates)) {
+        committed = true
+        finishWithoutCommit(false)
+        event.nativeEvent?.stopPropagation?.()
+        return
+      }
       committed = true
 
       useScene.temporal.getState().resume()
@@ -271,18 +289,7 @@ export const MovePipeSegmentTool: React.FC<{ node: AnyNode }> = ({ node }) => {
       event.nativeEvent?.stopPropagation?.()
     }
 
-    const onCancel = () => {
-      connectivity?.clear()
-      if (existedAtStart) {
-        setMeshHidden(false)
-        useViewer.getState().setSelection({ selectedIds: [nodeId] })
-      }
-      useAlignmentGuides.getState().clear()
-      useScene.temporal.getState().resume()
-      markToolCancelConsumed()
-      useEditor.getState().setMovingNodeOrigin('3d')
-      useEditor.getState().setMovingNode(null)
-    }
+    const onCancel = () => finishWithoutCommit(true)
 
     emitter.on('grid:move', onMove)
     emitter.on('grid:click', commit)
