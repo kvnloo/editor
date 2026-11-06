@@ -131,3 +131,49 @@ test('the browser download URL stays usable for 60 seconds, then is revoked', as
     }
   }
 })
+
+test('overlapping manual downloads acknowledge only the completed shutter', async () => {
+  const saved: SnapshotSavedEvent[] = []
+  const onSaved = (event: SnapshotSavedEvent | undefined) => {
+    if (event) saved.push(event)
+  }
+  emitter.on('snapshot:saved', onSaved)
+  let complete!: (url: string) => void
+  try {
+    const first = downloadSnapshot(
+      'project',
+      'Building',
+      new Blob(['first frame'], { type: 'image/webp' }),
+      { ...camera, requestId: 'manual-first' },
+      () =>
+        new Promise<string>((resolve) => {
+          complete = resolve
+        }),
+    )
+    await expect(
+      downloadSnapshot(
+        'project',
+        'Building',
+        new Blob(['second frame'], { type: 'image/webp' }),
+        { ...camera, requestId: 'manual-failed' },
+        () => Promise.reject(new Error('Download blocked')),
+      ),
+    ).rejects.toThrow('Download blocked')
+    expect(saved).toEqual([])
+
+    complete('blob:manual-first')
+    await first
+    expect(saved).toEqual([
+      {
+        id: 'manual-first',
+        requestId: 'manual-first',
+        projectId: 'project',
+        url: 'blob:manual-first',
+        width: 1920,
+        height: 1080,
+      },
+    ])
+  } finally {
+    emitter.off('snapshot:saved', onSaved)
+  }
+})

@@ -491,3 +491,47 @@ describe('an ephemeral capture', () => {
     expect(stored).toEqual([blob])
   })
 })
+
+test('a failed manual host delivery acknowledges once and ignores automatic saves', async () => {
+  const projectId = 'project'
+  const requestId = 'manual-shutter'
+  const failures: SnapshotCaptureFailedEvent[] = []
+  const saved: Array<Parameters<typeof isOverlaySnapshotSave>[0]> = []
+  const onFailure = (event: SnapshotCaptureFailedEvent) => {
+    failures.push(event)
+  }
+  const onSaved = (event: Parameters<typeof isOverlaySnapshotSave>[0]) => {
+    saved.push(event)
+  }
+  emitter.on('snapshot:capture-failed', onFailure)
+  emitter.on('snapshot:saved', onSaved)
+  try {
+    const background = {
+      id: 'thumbnail',
+      url: 'blob:thumbnail',
+      projectId,
+      width: 512,
+      height: 512,
+    }
+    emitter.emit('snapshot:saved', background)
+    emitter.emit('snapshot:saved', { ...background, requestId: 'background-thumbnail' })
+    expect(saved.every((event) => !isOverlaySnapshotSave(event, projectId, requestId))).toBe(true)
+
+    const busy = { current: false }
+    await runSnapshotCapture(
+      requestId,
+      busy,
+      async () => {
+        throw new Error('Host download unavailable')
+      },
+      (failure) => emitter.emit('snapshot:capture-failed', failure),
+    )
+
+    expect(failures).toEqual([{ requestId, error: 'Host download unavailable' }])
+    expect(saved).toEqual([background, { ...background, requestId: 'background-thumbnail' }])
+    expect(busy.current).toBe(false)
+  } finally {
+    emitter.off('snapshot:saved', onSaved)
+    emitter.off('snapshot:capture-failed', onFailure)
+  }
+})
