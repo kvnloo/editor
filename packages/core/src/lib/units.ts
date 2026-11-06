@@ -44,7 +44,7 @@ export function parseDimension(input: string): number | null {
  * Parse an angle string into degrees.
  *
  * Accepts plain numbers (e.g. "45", "90.5").
- * Trailing "°" or "deg" suffixes are stripped if present.
+ * Accepts optional "°" or "deg" suffixes; the entire token must be valid.
  *
  * @returns The angle in degrees, or null if parsing fails.
  */
@@ -52,12 +52,11 @@ export function parseAngle(input: string): number | null {
   const trimmed = input.trim()
   if (!trimmed) return null
 
-  // Strip common degree suffixes
-  const cleaned = trimmed.replace(/°|deg$/i, '').trim()
-  if (!cleaned) return null
+  const match = trimmed.match(/^([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*(?:°|deg)?$/i)
+  if (!match?.[1]) return null
 
-  const value = parseFloat(cleaned)
-  if (Number.isNaN(value)) return null
+  const value = Number(match[1])
+  if (!Number.isFinite(value)) return null
 
   // Normalize to 0-360 range
   return ((value % 360) + 360) % 360

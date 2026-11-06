@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { parseAngle, parseDimension, pointFromLengthAngle } from './units'
+import { parseAngle, parseDimension, pointFromLengthAngle } from '@pascal-app/core'
 
 describe('parseDimension', () => {
   it('parses bare number as meters', () => {
@@ -47,6 +47,30 @@ describe('parseAngle', () => {
   it('returns null on invalid string', () => {
     expect(parseAngle('')).toBeNull()
     expect(parseAngle('invalid')).toBeNull()
+  })
+
+  it('accepts typed degrees without changing dimensional units or endpoints', () => {
+    const length = parseDimension('2m')
+    const angle = parseAngle('90deg')
+    expect(length).toBe(2)
+    expect(angle).toBe(90)
+    const [x, z] = pointFromLengthAngle([0, 0], length!, angle!)
+    expect(x).toBeCloseTo(0, 10)
+    expect(z).toBeCloseTo(2, 10)
+    expect(parseAngle(' 90 ° ')).toBe(90)
+    expect(parseAngle('-90°')).toBe(270)
+    expect(parseAngle('450deg')).toBe(90)
+  })
+
+  it('rejects text following a degree symbol', () => {
+    expect(parseAngle('90°oops')).toBeNull()
+    expect(parseAngle('90°deg')).toBeNull()
+  })
+
+  it('rejects unrecognized suffixes and malformed numeric tokens', () => {
+    expect(parseAngle('45junk')).toBeNull()
+    expect(parseAngle('45degjunk')).toBeNull()
+    expect(parseAngle('45.2.3°')).toBeNull()
   })
 })
 
