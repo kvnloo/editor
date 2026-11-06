@@ -9,6 +9,7 @@ import {
   type ChimneyMaterialRole,
   DEFAULT_BRUSH_SETTINGS,
   type DormerSurfaceMaterialRole,
+  emitter,
   type LevelNode,
   nodeRegistry,
   type RoofSurfaceMaterialRole,
@@ -64,12 +65,23 @@ import {
   snappingModesFor,
 } from '../lib/snapping-mode'
 import { publishNavigationSyncPoseToStore } from './navigation-sync-pose-store'
+import { useFloorplanDraftPreview } from './use-floorplan-draft-preview'
 import useInteractionScope from './use-interaction-scope'
+import { useWallDraftTyping } from './use-wall-draft-typing'
 
 const DEFAULT_ACTIVE_SIDEBAR_PANEL = 'build'
 const DEFAULT_FLOORPLAN_PANE_RATIO = 0.5
 const MIN_FLOORPLAN_PANE_RATIO = 0.15
 const MAX_FLOORPLAN_PANE_RATIO = 0.85
+
+function cancelStraightWallDraftBeforeViewChange(): void {
+  const { wallDraftStart, wallPolygonDraftPoints } = useFloorplanDraftPreview.getState()
+  if (!wallDraftStart || wallPolygonDraftPoints.length > 0) return
+  // A typed first Escape only clears the buffer. Changing views must cancel
+  // the chain, so clear typing before notifying its current tool owner.
+  useWallDraftTyping.getState().clearInput()
+  emitter.emit('tool:cancel')
+}
 
 export type ViewMode = '3d' | '2d' | 'split'
 export type SplitOrientation = 'horizontal' | 'vertical'
@@ -1475,6 +1487,7 @@ const useEditor = create<EditorState>()(
       },
       viewMode: DEFAULT_PERSISTED_EDITOR_UI_STATE.viewMode,
       setViewMode: (mode) => {
+        if (get().viewMode !== mode) cancelStraightWallDraftBeforeViewChange()
         set({ viewMode: mode, isFloorplanOpen: mode !== '3d' })
         // Going the other way, the view wins and the mode yields. Hiding the 3D
         // pane leaves the brush unreachable, and a held `sculpting` scope would
@@ -1485,12 +1498,8 @@ const useEditor = create<EditorState>()(
       splitOrientation: DEFAULT_PERSISTED_EDITOR_LAYOUT_STATE.splitOrientation,
       setSplitOrientation: (orientation) => set({ splitOrientation: orientation }),
       isFloorplanOpen: DEFAULT_PERSISTED_EDITOR_UI_STATE.isFloorplanOpen,
-      setFloorplanOpen: (open) => set({ isFloorplanOpen: open, viewMode: open ? 'split' : '3d' }),
-      toggleFloorplanOpen: () =>
-        set((state) => {
-          const open = !state.isFloorplanOpen
-          return { isFloorplanOpen: open, viewMode: open ? 'split' : '3d' }
-        }),
+      setFloorplanOpen: (open) => get().setViewMode(open ? 'split' : '3d'),
+      toggleFloorplanOpen: () => get().setViewMode(get().isFloorplanOpen ? '3d' : 'split'),
       isFloorplanHovered: false,
       setFloorplanHovered: (hovered) => set({ isFloorplanHovered: hovered }),
       isRiserOpen: false,

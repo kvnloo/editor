@@ -159,3 +159,111 @@ describe('wall draft click length contract', () => {
     ).toEqual([2, 0])
   })
 })
+
+describe('single-wall view switches', () => {
+  test('cancels each typed 2D/3D/split draft once without scene or history writes', () => {
+    const preview = useFloorplanDraftPreview.getState()
+    const originalView = useEditor.getState().viewMode
+    const sceneNodes = useScene.getState().nodes
+    const transitions = [
+      ['3d', '2d'],
+      ['2d', 'split'],
+      ['split', '3d'],
+      ['3d', 'split'],
+      ['split', '2d'],
+      ['2d', '3d'],
+    ] as const
+    const cancels: Array<{ input: string; projectedEnd: [number, number] | null }> = []
+    let sceneWrites = 0
+    let commits = 0
+
+    preview.setWallDraftStart(null)
+    preview.setWallDraftEnd(null)
+    preview.setWallPolygonDraftPoints([])
+    clearSceneHistory()
+    const stopScene = useScene.subscribe((current, previous) => {
+      if (current.nodes !== previous.nodes) sceneWrites += 1
+    })
+    const stopCommits = subscribeSceneCommits(() => {
+      commits += 1
+    })
+    const onCancel = () => {
+      const { input, projectedEnd } = useWallDraftTyping.getState()
+      cancels.push({ input, projectedEnd })
+    }
+    emitter.on('tool:cancel', onCancel)
+
+    try {
+      for (const [from, to] of transitions) {
+        preview.setWallDraftStart(null)
+        preview.setWallDraftEnd(null)
+        useEditor.getState().setViewMode(from)
+        const typing = useWallDraftTyping.getState()
+        typing.clearInput()
+        preview.setWallDraftStart([0, 0])
+        preview.setWallDraftEnd([1, 0])
+        typing.append('1')
+        typing.append('2')
+        typing.setProjectedEnd([1, 0])
+
+        const options = { bareUnit: 'm', system: 'metric' } as const
+        expect(
+          resolveWallDraftClickPoint({
+            start: [0, 0],
+            currentEnd: [1, 0],
+            rawPoint: [7, 0],
+            input: useWallDraftTyping.getState().input,
+            projectedEnd: useWallDraftTyping.getState().projectedEnd,
+            options,
+          }),
+        ).toEqual([12, 0])
+
+        const beforeCancels = cancels.length
+        let typingResets = 0
+        const stopTyping = useWallDraftTyping.subscribe((current, previous) => {
+          if (current.input !== previous.input || current.projectedEnd !== previous.projectedEnd) {
+            typingResets += 1
+          }
+        })
+        try {
+          if (from === '3d' && to === 'split') useEditor.getState().setFloorplanOpen(true)
+          else if (from === 'split' && to === '3d') useEditor.getState().toggleFloorplanOpen()
+          else useEditor.getState().setViewMode(to)
+          useEditor.getState().setViewMode(to)
+          // A second adapter's cleanup must not publish another typing reset.
+          typing.clearInput()
+
+          expect(useEditor.getState().viewMode).toBe(to)
+          expect(cancels.slice(beforeCancels)).toEqual([{ input: '', projectedEnd: null }])
+          expect(typingResets).toBe(1)
+          expect(
+            resolveWallDraftClickPoint({
+              start: [10, 0],
+              currentEnd: [11, 0],
+              rawPoint: [13, 0],
+              input: useWallDraftTyping.getState().input,
+              projectedEnd: useWallDraftTyping.getState().projectedEnd,
+              options,
+            }),
+          ).toEqual([13, 0])
+        } finally {
+          stopTyping()
+        }
+      }
+
+      expect(useScene.getState().nodes).toBe(sceneNodes)
+      expect({ sceneWrites, commits }).toEqual({ sceneWrites: 0, commits: 0 })
+      expect(useScene.temporal.getState().pastStates).toHaveLength(0)
+      expect(useScene.temporal.getState().futureStates).toHaveLength(0)
+    } finally {
+      emitter.off('tool:cancel', onCancel)
+      stopCommits()
+      stopScene()
+      preview.setWallDraftStart(null)
+      preview.setWallDraftEnd(null)
+      preview.setWallPolygonDraftPoints([])
+      useWallDraftTyping.getState().clearInput()
+      useEditor.getState().setViewMode(originalView)
+    }
+  })
+})
