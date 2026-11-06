@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from 'bun:test'
 import { createI18n, setLocale, translate } from '@pascal-app/core'
+import { bundledLocalePacks, registerBundledLocales } from '@pascal-app/editor/locales'
 import { authoredLevelName, localizedLevelName } from './level-name'
-import { registerBundledLocales } from './locales'
 
 afterEach(() => setLocale('en'))
 
@@ -60,4 +60,22 @@ test('a stored default level name is not an authored name, so renaming starts em
   expect(authoredLevelName({ level: 1, name: 'Level 1' })).toBeUndefined()
   expect(authoredLevelName({ level: 1 })).toBeUndefined()
   expect(authoredLevelName({ level: 1, name: ' Mezzanine ' })).toBe('Mezzanine')
+})
+
+test('Italian is bundled without publishing unreviewed translations', () => {
+  expect(bundledLocalePacks.it.locale).toBe('it')
+  expect(Object.keys(bundledLocalePacks.it.messages)).toHaveLength(0)
+})
+
+test('Italian falls back to English UI labels while translations await review', () => {
+  registerBundledLocales()
+  setLocale('it')
+  expect(translate('viewer.display.title', 'Display settings')).toBe('Display settings')
+  expect(translate('editor.buildPanel.rooms.title', 'Rooms')).toBe('Rooms')
+})
+
+test('Italian registration preserves reviewed French UI labels', () => {
+  registerBundledLocales()
+  setLocale('fr')
+  expect(translate('editor.buildPanel.rooms.title', 'Rooms')).toBe('Pièces')
 })
