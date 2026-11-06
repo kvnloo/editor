@@ -23,6 +23,7 @@ Canonical rules for code that touches `packages/core`, `packages/viewer`, `packa
 | [interaction-scope](interaction-scope.md) | The authoritative interaction state machine ("the spine"): `InteractionScope` union, the begin/update/end/endIf contract, the raycast hot-set, and the overlay scope matrix |
 | [viewer-isolation](viewer-isolation.md) | Keeping `@pascal-app/viewer` editor-agnostic |
 | [capture-runtime](capture-runtime.md) | Open capture protocol, host source boundary, static/live viewer layers, and stream extension |
+| [gigapixel](gigapixel.md) | Fork gigapixel/DeepZoom architecture: render passes, RGBA pyramid, ZIP writer, viewer, agent planning and open risks |
 | [selection-managers](selection-managers.md) | Two-layer selection (viewer + editor), events, outliner |
 | [selection-groups](selection-groups.md) | Session multi-select groups (Ctrl/Cmd+G), expand-on-click, how they differ from collections |
 | [scene-registry](scene-registry.md) | Global node ID → Object3D map and `useRegistry` |
