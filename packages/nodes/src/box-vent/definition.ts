@@ -176,7 +176,6 @@ const boxVentHandles: HandleDescriptor<BoxVentNodeType>[] = [
  */
 export const boxVentDefinition: NodeDefinition<typeof BoxVentNode> = {
   kind: 'box-vent',
-  snapProfile: 'item',
   schemaVersion: 3,
   schema: BoxVentNode,
   category: 'structure',

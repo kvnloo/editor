@@ -14,23 +14,16 @@ test('the inspector keeps 180 px, or its own height if shorter, above the full c
   ).toEqual({ inspector: 0, card: 240 })
 })
 
-test('on a short window the help card scrolls to preserve editing space', () => {
+test('on a short window the inspector gives way first, down to its header', () => {
   expect(rightStackFloors({ ...tall, naturalHeight: 500, stackHeight: 400 })).toEqual({
-    inspector: 180,
-    card: 212,
+    inspector: 152,
+    card: 240,
   })
 })
 
-test('expanded hints cannot squeeze the inspector down to just its header', () => {
+test('on a very short window the inspector keeps its header and the card scrolls', () => {
   expect(rightStackFloors({ ...tall, naturalHeight: 500, stackHeight: 258 })).toEqual({
-    inspector: 180,
-    card: 70,
-  })
-})
-
-test('a column shorter than the inspector minimum still bounds both cards', () => {
-  expect(rightStackFloors({ ...tall, naturalHeight: 500, stackHeight: 100 })).toEqual({
-    inspector: 92,
-    card: 0,
+    inspector: 52,
+    card: 198,
   })
 })

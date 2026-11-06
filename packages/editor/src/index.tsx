@@ -2,11 +2,21 @@
 // own shells on top of `@pascal-app/editor` (community-app, embedders)
 // don't have to learn three separate package imports. The canonical
 // definitions still live in `@pascal-app/core` / `@pascal-app/viewer`.
+import { registerCompiledMessages as registerEditorMessages } from '@pascal-app/core'
+import { messages as editorEnglishMessages } from './i18n/locales/en/messages'
+
+// Published-package consumers need compiled English too: Lingui cannot
+// interpolate a raw fallback literal in production. Other bundled locales
+// remain explicitly host-registered through `@pascal-app/editor/locales`.
+registerEditorMessages('en', '', editorEnglishMessages)
+
 export {
   type ApplySceneSnapshotOptions,
   acquireSceneReadOnlyLease,
   applyScenePatch,
   applySceneSnapshot,
+  type CompiledTranslationMessages,
+  createI18n,
   DEFAULT_CURVED_STAIR_INNER_RADIUS,
   DEFAULT_CURVED_STAIR_SWEEP_ANGLE,
   DEFAULT_SPIRAL_SHOW_CENTER_COLUMN,
@@ -22,6 +32,16 @@ export {
   DEFAULT_STAIR_THICKNESS,
   DEFAULT_STAIR_TYPE,
   DEFAULT_STAIR_WIDTH,
+  defaultI18n,
+  formatLength,
+  formatNumber,
+  getLocale,
+  normalizeDecimalInput,
+  type PascalI18n,
+  PascalI18nProvider,
+  parseLocalizedNumber,
+  registerCompiledMessages,
+  registerMessages,
   type SceneCommit,
   type SceneCommitListener,
   type SceneCommitOrigin,
@@ -29,7 +49,15 @@ export {
   type SceneNodePatch,
   type ScenePatch,
   type SceneSnapshot,
+  setLocale,
+  subscribe,
   subscribeSceneCommits,
+  type TranslationMessage,
+  type TranslationMessages,
+  type TranslationParams,
+  translate,
+  useLocale,
+  usePascalI18n,
   useScene,
 } from '@pascal-app/core'
 export { useViewer } from '@pascal-app/viewer'
@@ -68,6 +96,7 @@ export { FloatingActionMenu as FloatingMenu } from './components/editor/floating
 // flags. Tools place onto `useViewer.selection.levelId`, so the host must set a
 // building + level selection first.
 export { EDITOR_GRID_INPUT_NAME, Grid } from './components/editor/grid'
+export { Html as LocalizedHtml } from './components/editor/localized-html'
 export {
   DimensionPill,
   type DimensionPillPart,
@@ -98,12 +127,15 @@ export {
 } from './components/editor/node-arrow-handles'
 export { QuickMeasurementCard } from './components/editor/quick-measurement-card'
 export { SelectionManager } from './components/editor/selection-manager'
+export { SeparatorEndGrip } from './components/editor/separator-end-grip'
 export {
   type SnapshotCameraData,
   ThumbnailGenerator,
 } from './components/editor/thumbnail-generator'
 export { PLUGINS_VIEW_ID } from './components/editor/views/use-editor-views'
 export { WallMoveSideHandles } from './components/editor/wall-move-side-handles'
+export { WallPushArrow } from './components/editor/wall-push-arrow'
+export { useWallsBelowSetting } from './components/editor-2d/floorplan-adjacent-walls-layer'
 export { useFloorplanRender } from './components/editor-2d/floorplan-render-context'
 export { FloorplanDimensionRenderer } from './components/editor-2d/renderers/floorplan-dimension-renderer'
 export {
@@ -124,6 +156,7 @@ export {
   buildSvgArrowHeadPoints,
   getArcPlanPoint,
 } from './components/editor-2d/svg-paths'
+export { useCeilingsSetting } from './components/systems/ceiling/ceiling-system'
 export type {
   SelectionAffordanceHistoryApi,
   SelectionAffordanceInteractionApi,
@@ -155,7 +188,6 @@ export {
 } from './components/tools/item/use-placement-coordinator'
 export { MoveRegistryNodeTool } from './components/tools/registry/move-registry-node-tool'
 export {
-  type RegistryToolContextValue,
   RegistryToolProvider,
   useRegistryToolContext,
 } from './components/tools/registry-tool-context'
@@ -199,6 +231,7 @@ export {
 export { preloadRegistryToolModules, ToolManager } from './components/tools/tool-manager'
 export {
   chainEndJoinsExistingWall,
+  createInvisibleWallOnCurrentLevel,
   createWallOnCurrentLevel,
   findWallSnapTarget,
   getSegmentGridStep,
@@ -216,6 +249,21 @@ export {
   type WallPlanPoint,
   type WallSnapRadii,
 } from './components/tools/wall/wall-drafting'
+export {
+  lockWallPullDirection,
+  snapWallPullPoint,
+  WALL_PULL_ANGLE_STEP,
+  WALL_PULL_LOCK_TOLERANCE,
+  WALL_PULL_SNAP_LABELS,
+  WALL_PULL_SNAP_RADII,
+  type WallPullDirectionLock,
+  type WallPullGuide,
+  type WallPullGuideKind,
+  type WallPullSnapInput,
+  type WallPullSnapKind,
+  type WallPullSnapRadii,
+  type WallPullSnapResult,
+} from './components/tools/wall/wall-pull-snap'
 // `ToolbarLeft` / `ToolbarRight` alias `ViewerToolbarLeft` / `ViewerToolbarRight`
 // (same components) under the names headless hosts compose their toolbars with.
 export {
@@ -238,6 +286,8 @@ export {
 } from './components/ui/build-panel/build-panel'
 export { useCommandPalette } from './components/ui/command-palette'
 export { ActionButton, ActionGroup } from './components/ui/controls/action-button'
+// A finish row in a node panel: the paint tool's picker and its write for one paint role.
+export { FinishSwatch } from './components/ui/controls/finish-swatch'
 export {
   MaterialPaintPanel,
   type MaterialPaintPanelProps,
@@ -279,13 +329,17 @@ export { applyMultiHeightMode } from './components/ui/panels/multi-height-mode'
 // a kind-owned panel and need PanelWrapper for the chrome.
 export { PanelWrapper } from './components/ui/panels/panel-wrapper'
 export { ParametricInspector as Inspector } from './components/ui/panels/parametric-inspector'
+// A floor's script (a room's, a slab's): its code to read and a way to take it off.
+export { ScriptedFinishRow } from './components/ui/panels/room-panel'
 export { ShapeChoice } from './components/ui/panels/shape-choice'
 export { WallPaintRegionList } from './components/ui/panels/wall-region-list'
 export { PALETTE_COLORS } from './components/ui/primitives/color-dot'
 export {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
@@ -320,6 +374,8 @@ export {
   SnapTargetBadge,
   SnapTargetIcon,
 } from './components/ui/snap-target-badge'
+// A wall's project wall types: new, edit, duplicate (the wall panel's Assembly).
+export { WallTypeMenu } from './components/ui/wall-type/wall-type-menu'
 export {
   FloorplanCompassButton,
   type FloorplanCompassButtonProps,
@@ -329,6 +385,12 @@ export {
   type FloorplanPreviewProps,
   type FloorplanPreviewScene,
 } from './components/viewer/floorplan-preview'
+export {
+  DaylightMenu,
+  EdgesToggleItem,
+  QualityMenu,
+} from './components/viewer/render-settings-menu'
+export { openSkyPanel, SkyControl, useSkyPanel } from './components/viewer/sky-control'
 export { useViewerCameraNavigationSync } from './components/viewer/use-viewer-camera-navigation-sync'
 export {
   ViewerControlsBar,
@@ -370,6 +432,18 @@ export { usePlacementNotice } from './hooks/use-placement-notice'
 export { useReducedMotion } from './hooks/use-reduced-motion'
 export { useSelectedRoom } from './hooks/use-selected-room'
 export { type Selection, useSelection } from './hooks/use-selection'
+export { localizedLevelName } from './i18n/level-name'
+export {
+  messageSlug,
+  nodeDescriptionDescriptor,
+  nodeLabel,
+  nodeLabelDescriptor,
+  toolHintChipLabel,
+  toolHintDescriptor,
+  toolHintKey,
+  toolHintLabel,
+} from './i18n/node-messages'
+export { sceneThemeName } from './i18n/scene-theme-name'
 export {
   clearPlacementSurface,
   getPlacementSurface,
@@ -495,6 +569,7 @@ export {
   type FloorplanSchedule,
   type FloorplanToolContext,
   type FloorplanToolMode,
+  type FloorplanWallDimensionFaces,
   floorplanGeometryMetadata,
   getFloorplanNodeExtension,
   readFloorplanContext,
@@ -583,6 +658,11 @@ export {
   storedScript,
 } from './lib/geometry-script/author'
 export { compileGeometryScriptInWorker } from './lib/geometry-script/client'
+export {
+  compileAndStoreFinishScript,
+  editorFinishScriptHost,
+  finishScriptCode,
+} from './lib/geometry-script/finish-scripts'
 export { exportSceneToGlb, type GlbExportOptions } from './lib/glb-export'
 export {
   type EditorGridEvent,
@@ -619,6 +699,11 @@ export {
   scopeNodeId,
 } from './lib/interaction/scope'
 export { isEditableKeyboardTarget } from './lib/keyboard-pan'
+export {
+  formatLayerDepth,
+  formatLayerThickness,
+  parseLayerThickness,
+} from './lib/layer-thickness'
 export { selectPlacedNode } from './lib/level-selection'
 // Lot drop-in — address → parcel → streets → front edge → setbacks, on the
 // site node, through the parcel provider the host sets.
@@ -694,6 +779,7 @@ export {
   measurementFloorplanPresentationColor,
   measurementPresentationColor,
   metersToLinearUnit,
+  parseLinearMeasurementInput,
   squareMetersToAreaUnit,
 } from './lib/measurements'
 export type {
@@ -712,6 +798,7 @@ export {
 } from './lib/paint-scope'
 export {
   getNodePanelModel,
+  type MultiPanelControl,
   type NodePanelModel,
   PANEL_MODEL_EXTENSION,
   type PanelAction,
@@ -772,7 +859,14 @@ export { clearRoofDuplicateMetadata, duplicateRoofSubtree } from './lib/roof-dup
 // kind-owned door / window tools in `@pascal-app/nodes` and the item
 // placement coordinator's roof-wall strategy.
 export { hasRoofFaceChildOverlap, type RoofWallHit, resolveRoofWallHit } from './lib/roof-wall-hit'
-export { WALL_PUSH_AFFORDANCE, type WallPushArrowPayload } from './lib/room-handle-drag'
+export {
+  selectedWallDimensions,
+  separatorFloorElevation,
+  separatorPushHandles,
+  WALL_PUSH_AFFORDANCE,
+  type WallPushArrowPayload,
+} from './lib/room-handle-drag'
+export { displayRoomName } from './lib/room-name-messages'
 export type { RoomKey, RoomSelectionRecord } from './lib/room-selection'
 export { popRoomSelection, selectRoom } from './lib/room-selection-commands'
 export {
@@ -789,6 +883,11 @@ export {
   remapSceneMaterialRefs,
   sceneMaterialUsageCounts,
 } from './lib/scene-material-refs'
+export {
+  beginSeparatorEndDrag,
+  runSeparatorEndDrag,
+  type SeparatorEndDrag,
+} from './lib/separator-edit'
 export { movementSfxStepKey } from './lib/sfx/movement-tick'
 export { emitDeleteSFX, triggerSFX } from './lib/sfx-bus'
 export { playSFX, type SFXName, type SFXPlaybackOptions } from './lib/sfx-player'
@@ -847,6 +946,7 @@ export {
   sculptFieldForSite,
   terrainPointInsideSite,
 } from './lib/terrain-sculpt'
+export { withToolShortcut } from './lib/tool-shortcuts'
 export { isTypingTarget } from './lib/typing-target'
 export { enterUnitFocus } from './lib/units'
 export { exportSceneToUsdz, type UsdzExportOptions } from './lib/usdz-export'
@@ -867,10 +967,27 @@ export {
 } from './lib/viewer-selection'
 export {
   getWallDrawVariant,
+  getWallLineKind,
+  INVISIBLE_WALL_DRAFT_THICKNESS,
+  invisibleWallDraftSnapLines,
   selectWallDrawVariant,
+  selectWallKind,
+  useWallDraftThickness,
   useWallDrawVariant,
+  useWallKind,
+  WALL_KINDS,
   type WallDrawVariant,
+  type WallKind,
+  type WallLineKind,
 } from './lib/wall-draw-variant'
+export {
+  nearestWallParallelTarget,
+  nudgeWallPosition,
+  publishWallParallelGuide,
+  WALL_PARALLEL_SNAP_RADIUS,
+  type WallParallelTarget,
+  wallParallelTargets,
+} from './lib/wall-parallel-snap'
 export {
   createWallPointerTracker,
   wallPointerInParent,
@@ -883,12 +1000,42 @@ export {
   startWallPolygonDraft,
   wallPolygonDraftWalls,
 } from './lib/wall-polygon-draft'
+export {
+  endWallPullRun,
+  releaseWallPullDrag,
+  startWallPull,
+  useWallPullRun,
+  WALL_PULL_AFFORDANCE,
+  WALL_PULL_GRIP_TITLE,
+  type WallPullGripPayload,
+  type WallPullRun,
+  wallDraftIsRun,
+  wallPullSeed,
+  wallPullTypePatch,
+} from './lib/wall-pull'
+export {
+  isWallRunFree,
+  publishWallRunFeedback,
+  snapWallRunDraftPoint,
+  wallRunDirection,
+} from './lib/wall-run-snap'
+export {
+  deleteProjectWallType,
+  saveProjectWallType,
+  useProjectWallTypes,
+  type WallTypePlacement,
+  wallTypePlacementOf,
+} from './lib/wall-type'
 export { writeWindowChanges } from './lib/window-changes'
 export {
   closeWindowOpenState,
+  getDisplayedWindowShutterValue,
   getDisplayedWindowValue,
   isOperableWindowType,
   openWindowOpenState,
+  setWindowShuttersOpenState,
+  type WindowOpenAnimationOptions,
+  type WindowShutterField,
 } from './lib/window-interaction'
 export {
   getActiveBuildingPose,
@@ -899,7 +1046,11 @@ export {
   snapWorldXZForActiveBuilding,
 } from './lib/world-grid-snap'
 export { subscribeCameraPose } from './store/camera-pose-store'
-export { default as useAlignmentGuides } from './store/use-alignment-guides'
+export {
+  type DraftGuideLine,
+  type DraftGuides,
+  default as useAlignmentGuides,
+} from './store/use-alignment-guides'
 export { default as useAudio } from './store/use-audio'
 export { type CameraHintAction, useCameraHintFocus } from './store/use-camera-hint-focus'
 export { type CommandAction, useCommandRegistry } from './store/use-command-registry'

@@ -4,7 +4,6 @@ import {
   type FloorplanGeometry,
   type FloorplanPoint,
   type GeometryContext,
-  resolveElevatorDimensions,
   resolveElevatorServiceLevelIds,
   useInteractive,
   useLiveNodeOverrides,
@@ -30,6 +29,8 @@ import {
  * subscribes to both stores so this builder re-runs on change.
  */
 
+const STAGE_LEVEL_FILTER_HIDE = false
+
 export function buildElevatorFloorplan(
   node: ElevatorNode,
   ctx: GeometryContext,
@@ -44,7 +45,7 @@ export function buildElevatorFloorplan(
   // hosted on, which is the active level when the registry layer walks
   // from `levelId`).
   const parentLevelId = ctx.parent?.id
-  if (parentLevelId) {
+  if (STAGE_LEVEL_FILTER_HIDE && parentLevelId) {
     const sceneNodes = collectAllNodes(ctx)
     const serviceLevelIds = resolveElevatorServiceLevelIds(display, sceneNodes)
     if (!serviceLevelIds.includes(parentLevelId as AnyNodeId)) {
@@ -52,12 +53,12 @@ export function buildElevatorFloorplan(
     }
   }
 
-  const {
-    shaftWallThickness: wallThickness,
-    shaftWidth,
-    shaftDepth,
-    doorWidth,
-  } = resolveElevatorDimensions(display)
+  const wallThickness = Math.max(display.shaftWallThickness ?? 0.09, 0.04)
+  const cabWidth = Math.max(display.width, 0.8)
+  const cabDepth = Math.max(display.depth, 0.8)
+  const shaftWidth = Math.max(display.shaftWidth ?? display.width, cabWidth, 0.8)
+  const shaftDepth = Math.max(display.shaftDepth ?? display.depth, cabDepth, 0.8)
+  const doorWidth = Math.min(Math.max(display.doorWidth, 0.45), shaftWidth - 0.24)
   const outerHalfW = Math.max(0.1, shaftWidth / 2 + wallThickness)
   const outerHalfD = Math.max(0.1, shaftDepth / 2 + wallThickness)
   const innerHalfW = Math.max(0.05, shaftWidth / 2)

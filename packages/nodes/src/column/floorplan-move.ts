@@ -5,6 +5,7 @@ import {
   collectAlignmentAnchors,
   type FloorplanMoveTarget,
   type FloorplanMoveTargetSession,
+  isMovable,
   movingFootprintAnchors,
   sceneRegistry,
   useLiveTransforms,
@@ -24,7 +25,6 @@ import {
   collectStructuralGridAxes,
   resolveStructuralGridSnap,
 } from '../structural-grid/coordination'
-import { isManagedColumn } from './edit-policy'
 
 /**
  * 2D floor-plan move handler for column. Columns need the same footprint-edge
@@ -36,8 +36,9 @@ import { isManagedColumn } from './edit-policy'
  */
 
 export const columnFloorplanMoveTarget: FloorplanMoveTarget<ColumnNode> = ({ node, nodes }) => {
-  if (isManagedColumn(node))
+  if (!isMovable(node)) {
     return { affectedIds: [], apply() {}, canCommit: () => false, commit() {} }
+  }
   const columnId = node.id as AnyNodeId
   const originalPosition: [number, number, number] = [...node.position] as [number, number, number]
   const rotationY = node.rotation ?? 0
@@ -50,7 +51,6 @@ export const columnFloorplanMoveTarget: FloorplanMoveTarget<ColumnNode> = ({ nod
 
   // Alignment candidates gathered once — scene is stable during the drag.
   const candidates = collectAlignmentAnchors(nodes, columnId)
-  const structuralGrids = collectStructuralGridAxes(nodes, node.parentId)
 
   const session: FloorplanMoveTargetSession = {
     affectedIds: [columnId],
@@ -75,7 +75,7 @@ export const columnFloorplanMoveTarget: FloorplanMoveTarget<ColumnNode> = ({ nod
       )
       const structuralSnap =
         isGridSnapActive() || isMagneticSnapActive()
-          ? resolveStructuralGridSnap(snapped, structuralGrids)
+          ? resolveStructuralGridSnap(snapped, collectStructuralGridAxes(nodes, node.parentId))
           : null
       const coordinated = structuralSnap?.point ?? snapped
       const next: [number, number, number] = [coordinated[0], originalPosition[1], coordinated[1]]

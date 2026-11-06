@@ -30,7 +30,6 @@ import {
   type WallEvent,
 } from '@pascal-app/core'
 import { useViewer } from '@pascal-app/viewer'
-import { Html } from '@react-three/drei'
 import { useFrame, useThree } from '@react-three/fiber'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -74,6 +73,7 @@ import useEditor, {
 import useFacingPose from '../../../store/use-facing-pose'
 import { getMovingNode } from '../../../store/use-interaction-scope'
 import usePlacementPreview from '../../../store/use-placement-preview'
+import { Html } from '../../editor/localized-html'
 import {
   createItemSurfaceGridDispatch,
   createItemSurfacePointerArbitration,
@@ -1008,9 +1008,9 @@ export function usePlacementCoordinator(config: PlacementCoordinatorConfig): Rea
 
     // Floor grab-offset: the item tracks the grabbed point instead of snapping
     // its origin under the cursor. The offset is computed in building-local space
-    // (`event.localPosition`), but `floorStrategy.move` snaps on the WORLD grid
-    // (`event.position`), so the corrected local point is re-projected to a
-    // corrected world point and both frames carry the offset to stay consistent.
+    // (`event.localPosition`, which `floorStrategy.move` snaps), and the corrected
+    // local point is re-projected to a corrected world point so both frames carry
+    // the offset and stay consistent.
     const applyFloorGrabOffset = (event: GridEvent): GridEvent => {
       if (relativeFloorStart === null) return event
       const rawX = event.localPosition[0]

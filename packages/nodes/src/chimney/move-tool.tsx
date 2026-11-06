@@ -13,8 +13,6 @@ import {
 import {
   consumePlacementDragRelease,
   copyCollectionIds,
-  isGridSnapActive,
-  isMagneticSnapActive,
   markToolCancelConsumed,
   triggerSFX,
   useEditor,
@@ -130,9 +128,9 @@ const MoveChimneyTool = ({ node }: { node: ChimneyNode }) => {
       const rawTarget = roofDrag.resolve(event)
       if (!rawTarget) return null
       return snapRoofSurfaceNodeTarget({
-        target: snapRelativeRoofDragTarget(rawTarget, event.nativeEvent?.altKey === true),
+        target: snapRelativeRoofDragTarget(rawTarget, event.nativeEvent?.shiftKey === true),
         node,
-        bypass: !isMagneticSnapActive() || event.nativeEvent?.altKey === true,
+        bypass: event.nativeEvent?.shiftKey === true,
       })
     }
 
@@ -151,11 +149,7 @@ const MoveChimneyTool = ({ node }: { node: ChimneyNode }) => {
       const sx = Math.round(target.localX * 20) / 20
       const sz = Math.round(target.localZ * 20) / 20
       const prev = lastSnapRef.current
-      if (
-        isGridSnapActive() &&
-        event.nativeEvent?.altKey !== true &&
-        (!prev || prev[0] !== sx || prev[1] !== sz)
-      ) {
+      if (event.nativeEvent?.shiftKey !== true && (!prev || prev[0] !== sx || prev[1] !== sz)) {
         triggerSFX('sfx:grid-snap')
         lastSnapRef.current = [sx, sz]
       }

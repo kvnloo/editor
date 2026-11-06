@@ -41,6 +41,7 @@ import { FloorRegionControls3D } from '../editor/floor-region-controls'
 import { OpenWallEnds3DLayer } from '../editor/open-wall-ends-3d-layer'
 import { OpeningGuides3DLayer } from '../editor/opening-guides-3d-layer'
 import { WallSnapBeaconLayer } from '../editor/wall-snap-beacon-layer'
+import { ElevatorTool } from './elevator/elevator-tool'
 import { MoveTool } from './item/move-tool'
 import { WallPaintRegionTool } from './paint-region/wall-paint-region-tool'
 import { RegistryToolProvider } from './registry-tool-context'
@@ -182,7 +183,7 @@ export const ToolManager: React.FC = () => {
   // Placing a roof makes its level active (selectPlacedNode); a wall, room, slab, stair or item tool
   // armed there, then or after a level change, draws on the storey the roof level covers.
   useEffect(() => {
-    if (!(tool && activeLevelId && isStoreyContent(tool))) return
+    if (!(tool && activeLevelId && isStoreyContent(tool, undefined))) return
     const storeyId = storeyOf(useScene.getState().nodes, activeLevelId)
     if (storeyId !== activeLevelId) setSelection({ levelId: storeyId as LevelNode['id'] })
   }, [tool, activeLevelId, setSelection])
@@ -303,6 +304,21 @@ export const ToolManager: React.FC = () => {
   const BuildToolComponent = showBuildTool && !useRegistryTool ? tools[tool] : null
   const handlePlacedNodeSelected = (nodeId: AnyNodeId) => {
     setSelection({ selectedIds: [nodeId] })
+  }
+  const handlePlacedElevatorSelected = (
+    nodeId: AnyNodeId,
+    elevatorBuildingId: BuildingNode['id'],
+  ) => {
+    // Preserve the active level. `setSelection`'s hierarchy guard nulls
+    // `levelId` whenever `buildingId` is passed without an explicit
+    // `levelId` — which deselected the current floor plan the moment an
+    // elevator was placed. Pass the current level through so the floor
+    // plan stays selected.
+    setSelection({
+      buildingId: elevatorBuildingId,
+      levelId: activeLevelId ?? null,
+      selectedIds: [nodeId],
+    })
   }
 
   return (
@@ -447,7 +463,14 @@ export const ToolManager: React.FC = () => {
             <RegistryToolComponent />
           </Suspense>
         )}
-        {!movingNode && BuildToolComponent ? <BuildToolComponent /> : null}
+        {!movingNode && !useRegistryTool && showBuildTool && tool === 'elevator' && (
+          <ElevatorTool
+            buildingId={buildingId as BuildingNode['id'] | null}
+            levelId={activeLevelId ?? null}
+            onPlaced={handlePlacedElevatorSelected}
+          />
+        )}
+        {!movingNode && BuildToolComponent && tool !== 'elevator' ? <BuildToolComponent /> : null}
         {/* Figma-style alignment guides published by the move / placement
             tools above. Lives inside the building-local group so the
             building-local guide coords render at the right world position. */}

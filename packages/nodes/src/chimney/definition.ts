@@ -352,7 +352,6 @@ const WHITE_MATERIAL = {
  */
 export const chimneyDefinition: NodeDefinition<typeof ChimneyNode> = {
   kind: 'chimney',
-  snapProfile: 'item',
   schemaVersion: 1,
   schema: ChimneyNode,
   category: 'structure',

@@ -227,7 +227,6 @@ const solarPanelHandles: HandleDescriptor<SolarPanelNodeType>[] = [
  */
 export const solarPanelDefinition: NodeDefinition<typeof SolarPanelNode> = {
   kind: 'solar-panel',
-  snapProfile: 'item',
   schemaVersion: 1,
   schema: SolarPanelNode,
   category: 'structure',

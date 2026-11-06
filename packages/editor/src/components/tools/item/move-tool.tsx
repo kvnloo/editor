@@ -1,7 +1,8 @@
-import type { AnyNodeId, SpawnNode } from '@pascal-app/core'
+import type { AnyNodeId, ElevatorNode, SpawnNode } from '@pascal-app/core'
 import { createSceneApi, nodeRegistry, useScene } from '@pascal-app/core'
 import { Suspense, useMemo } from 'react'
 import { useMovingNode } from '../../../store/use-interaction-scope'
+import { MoveElevatorTool } from '../elevator/move-elevator-tool'
 import { MoveRegistryNodeTool } from '../registry/move-registry-node-tool'
 import { getRegistryAffordanceTool } from '../shared/affordance-dispatch'
 
@@ -19,6 +20,8 @@ import { getRegistryAffordanceTool } from '../shared/affordance-dispatch'
  *   2. `MoveRegistryNodeTool` — generic translate-on-XZ for kinds that only
  *      declare `capabilities.movable` (shelf, spawn, duct-terminal,
  *      hvac-equipment, …).
+ *   3. `elevator` is the lone remaining legacy arm — its bespoke cab/shaft
+ *      mover hasn't been ported to a kind-owned affordance yet.
  */
 export const MoveTool: React.FC<{
   onNodeMoved?: (nodeId: AnyNodeId) => void
@@ -44,5 +47,7 @@ export const MoveTool: React.FC<{
     return <MoveRegistryNodeTool node={movingNode} />
   }
 
+  if (movingNode.type === 'elevator')
+    return <MoveElevatorTool node={movingNode as ElevatorNode} onCommitted={onNodeMoved} />
   return null
 }

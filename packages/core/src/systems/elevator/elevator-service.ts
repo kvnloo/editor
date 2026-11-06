@@ -1,6 +1,5 @@
 import type { AnyNode, AnyNodeId, ElevatorNode, LevelNode } from '../../schema'
 import { getLevelElevations } from '../../services/storey'
-import { resolveElevatorDimensions } from './elevator-geometry'
 
 export type ElevatorLevelEntry = {
   id: LevelNode['id']
@@ -81,7 +80,7 @@ export function resolveElevatorServiceLevels(
   return levels.slice(minIndex, maxIndex + 1)
 }
 
-function computeElevatorLevels(
+export function resolveElevatorLevels(
   elevator: ElevatorNode,
   nodes: Record<string, AnyNode>,
 ): {
@@ -91,10 +90,6 @@ function computeElevatorLevels(
   shaftTopY: number
   totalHeight: number
 } {
-  const dimensions = resolveElevatorDimensions(elevator)
-  const cabHeight = dimensions.cabHeight
-  // Keep the cab below the cap even when a thick shaft wall also makes a thick cap.
-  const topClearance = Math.max(0.3, dimensions.shaftWallThickness + 0.01)
   const allLevels = resolveElevatorBuildingLevels(elevator, nodes)
   const levelElevations = getLevelElevations(nodes as Record<AnyNodeId, AnyNode>)
 
@@ -126,42 +121,17 @@ function computeElevatorLevels(
     if (!elevation) continue
     stackTopY = Math.max(stackTopY, elevation.baseY + elevation.height)
   }
-  const configuredTopY = nextLevel
+  const shaftTopY = nextLevel
     ? (levelElevations.get(nextLevel.id)?.baseY ?? stackTopY)
     : lastServedLevel
       ? stackTopY
-      : cabHeight + topClearance
-
-  const shaftTopY = Math.max(
-    configuredTopY,
-    shaftBaseY + cabHeight + topClearance,
-    ...entries.map((entry) => entry.baseY + cabHeight + topClearance),
-  )
+      : elevator.cabHeight + 0.3
 
   return {
     entries,
     defaultEntry,
     shaftBaseY,
     shaftTopY,
-    totalHeight: Math.max(shaftTopY - shaftBaseY, cabHeight + topClearance),
+    totalHeight: Math.max(shaftTopY - shaftBaseY, elevator.cabHeight + 0.3),
   }
-}
-
-const levelCache = new WeakMap<
-  Record<string, AnyNode>,
-  WeakMap<ElevatorNode, ReturnType<typeof computeElevatorLevels>>
->()
-
-export function resolveElevatorLevels(elevator: ElevatorNode, nodes: Record<string, AnyNode>) {
-  let cache = levelCache.get(nodes)
-  if (!cache) {
-    cache = new WeakMap()
-    levelCache.set(nodes, cache)
-  }
-  let resolved = cache.get(elevator)
-  if (!resolved) {
-    resolved = computeElevatorLevels(elevator, nodes)
-    cache.set(elevator, resolved)
-  }
-  return resolved
 }

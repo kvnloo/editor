@@ -2,8 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import { Client, InMemoryTransport } from '@modelcontextprotocol/client'
 import { SceneBridge } from '../bridge/scene-bridge'
 import { createPascalMcpServer } from '../server'
 import { SqliteSceneStore } from '../storage/sqlite-scene-store'
@@ -39,6 +38,7 @@ const TOOL_POLICIES = [
       'search_materials',
       'validate_design',
       'verify_scene',
+      'view_assets',
       'view_scene',
     ],
   },
@@ -69,11 +69,13 @@ const TOOL_POLICIES = [
       'create_roof',
       'create_room',
       'create_stair',
+      'design_brief',
       'set_checkpoint',
       'create_story_shell',
       'create_unit',
       'cut_floor_opening',
       'duplicate_level',
+      'duplicate_node',
       'furnish_room',
       'place_in_room',
       'generate_variants',
@@ -95,7 +97,9 @@ const TOOL_POLICIES = [
       'apply_patch',
       'clear_scene',
       'add_object',
+      'author_scene',
       'add_column',
+      'set_wall_type',
       'edit_collection',
       'create_from_template',
       'create_house_from_brief',
@@ -106,6 +110,7 @@ const TOOL_POLICIES = [
       'delete_zone',
       'divide_zone',
       'duplicate_zone',
+      'move_node',
       'move_zone',
       'place_building',
       'rotate_zone',
@@ -118,20 +123,13 @@ const TOOL_POLICIES = [
       'get_project_status',
       'load_scene',
       'redo',
+      'set_ground_level',
+      'set_unit_members',
       'rename_scene',
       'run_batch',
       'save_scene',
       'undo',
     ],
-  },
-  {
-    annotations: {
-      readOnlyHint: false,
-      destructiveHint: true,
-      idempotentHint: true,
-      openWorldHint: false,
-    },
-    tools: ['set_unit_members'],
   },
   {
     annotations: {

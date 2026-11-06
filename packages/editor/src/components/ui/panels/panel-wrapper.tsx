@@ -1,16 +1,11 @@
 'use client'
 
-import { Icon } from '@iconify/react'
 import {
   type AnyNode,
   type AnyNodeId,
-  getInspectorExtensions,
-  type IconRef,
   type InspectorExtension,
-  useRegistryVersion,
-  useScene,
+  useScene, usePascalI18n,
 } from '@pascal-app/core'
-import { useViewer } from '@pascal-app/viewer'
 import { ChevronDown, ChevronLeft, GripHorizontal, RotateCcw, X } from 'lucide-react'
 import {
   type ComponentType,
@@ -21,18 +16,12 @@ import {
   useContext,
   useEffect,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
 } from 'react'
 import { useIsMobile } from '../../../hooks/use-mobile'
-import { IconRefImage } from '../icon-ref'
 import { NodeIconImage } from '../node-icon-image'
-import {
-  resolveActiveExtension,
-  toggleCard,
-  toggleExtension,
-} from '../../../lib/inspector-card-mode'
+import { resolveActiveExtension, toggleCard } from '../../../lib/inspector-card-mode'
 import { cn } from '../../../lib/utils'
 import { useInspectorExpanded } from '../../../lib/inspector-expanded'
 import { ActionButton, ActionGroup } from '../controls/action-button'
@@ -40,6 +29,7 @@ import { PanelSection } from '../controls/panel-section'
 import { ErrorBoundary } from '../primitives/error-boundary'
 import { useInRightStack } from '../right-stack'
 import { CollectionsPopover } from './collections/collections-popover'
+import { renderExtensionIcon, useInspectorExtensions } from './inspector-extensions'
 
 const DRAG_MARGIN = 8
 // Pointer travel (px) below which a header press is treated as a click
@@ -55,7 +45,7 @@ function clamp(value: number, min: number, max: number): number {
  * `data-viewer-bounds`) so it can't slide under the sidebar or top bar.
  * Falls back to the viewport when the marker isn't found.
  */
-function getDragBounds(el: HTMLElement | null, inStack = false): {
+function getDragBounds(el: HTMLElement | null): {
   left: number
   top: number
   right: number
@@ -66,15 +56,7 @@ function getDragBounds(el: HTMLElement | null, inStack = false): {
   if (!rect) {
     return { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight }
   }
-  const stack = inStack ? el?.closest('[data-right-stack]') : null
-  const stackRect = stack?.getBoundingClientRect()
-  const cardRect = stack?.querySelector('[data-right-stack-card]')?.getBoundingClientRect()
-  return {
-    left: rect.left,
-    top: stackRect ? stackRect.top - DRAG_MARGIN : rect.top,
-    right: rect.right,
-    bottom: cardRect && cardRect.height > 0 ? cardRect.top : rect.bottom,
-  }
+  return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom }
 }
 
 /**
@@ -127,6 +109,7 @@ export function PanelWrapper({
   className,
   width = 320, // default width
 }: PanelWrapperProps) {
+  const i18n = usePascalI18n()
   const isMobile = useIsMobile()
   const inStack = useInRightStack()
   const contextFooter = useContext(InspectorFooterContext)
@@ -139,35 +122,16 @@ export function PanelWrapper({
   // The wrapper self-resolves the selected node instead of taking a prop:
   // kind-owned `customPanel`s (wall, slab, …) render their own
   // <PanelWrapper>, so this is the one spot every inspector card flows
-  // through. Extensions only apply to a single-node selection.
-  const registryVersion = useRegistryVersion()
-  const selectedId = useViewer((s) =>
-    s.selection.selectedIds.length === 1 ? s.selection.selectedIds[0] : undefined,
-  ) as AnyNodeId | undefined
-  // Subscribe to the selected node's *type* only — a string primitive that
-  // doesn't change as fields are edited (same trick as ParametricInspector).
-  const selectedType = useScene((s) => (selectedId ? s.nodes[selectedId]?.type ?? null : null))
-  const installedPlugins = useScene((s) => s.installedPlugins)
-  const extensions = useMemo(() => {
-    // re-derive when plugin extensions register after mount (async plugin load)
-    void registryVersion
-    if (!selectedType) return []
-    return getInspectorExtensions(selectedType).filter(
-      (extension) => !extension.pluginId || installedPlugins.includes(extension.pluginId),
-    )
-  }, [selectedType, installedPlugins, registryVersion])
+  // through. Extensions only apply to a single-node selection; the action
+  // menu opens them (`InspectorExtensionActions`).
+  const { selectedId, extensions, primaryExtension } = useInspectorExtensions()
 
   // Which extension's content fills the card body (extension mode). The two
   // expanded modes are EITHER/OR: extension mode replaces the regular
   // controls; null shows the regular controls with no extension sections.
-  // See `lib/inspector-card-mode.ts` for the transition table.
-  const [activeExtensionId, setActiveExtensionId] = useState<string | null>(null)
   // Stale ids (kind changed, plugin gated off) fall back to regular mode.
-  const primaryExtensionId = useScene((state) => {
-    const node = selectedId ? state.nodes[selectedId] : undefined
-    return node ? extensions.find((extension) => extension.primaryWhen?.(node))?.id : undefined
-  })
-  const primaryExtension = extensions.find((extension) => extension.id === primaryExtensionId)
+  // See `lib/inspector-card-mode.ts` for the transition table.
+  const activeExtensionId = useInspectorExpanded((state) => state.activeExtensionId)
   const activeExtension = primaryExtension ?? resolveActiveExtension(activeExtensionId, extensions)
 
   // The panel is collapsed to just its header until the user expands it. The
@@ -182,14 +146,6 @@ export function PanelWrapper({
     if (primaryExtension) setCollapsed(false)
   }, [primaryExtension, selectedId, setCollapsed])
 
-  const applyMode = useCallback(
-    (next: { collapsed: boolean; activeExtensionId: string | null }) => {
-      setCollapsed(next.collapsed)
-      setActiveExtensionId(next.activeExtensionId)
-    },
-    [setCollapsed],
-  )
-
   // Chevron / header press — collapsed → regular, regular → collapsed,
   // extension mode → regular (exit the extension first, stay expanded).
   const handleCardToggle = useCallback(() => {
@@ -197,14 +153,12 @@ export function PanelWrapper({
       setCollapsed(!collapsed)
       return
     }
-    applyMode(toggleCard({ collapsed, activeExtensionId }))
-  }, [applyMode, collapsed, activeExtensionId, primaryExtension, setCollapsed])
+    useInspectorExpanded.getState().applyMode(toggleCard({ collapsed, activeExtensionId }))
+  }, [collapsed, activeExtensionId, primaryExtension, setCollapsed])
 
-  // Folding the card forgets the active extension — extension mode is a
-  // one-shot affordance of the header icon, not sticky panel state.
-  useEffect(() => {
-    if (collapsed) setActiveExtensionId(null)
-  }, [collapsed])
+  // Extension mode is an affordance of the card it was opened on: a card that
+  // closes (selection cleared or changed kind) leaves the next one regular.
+  useEffect(() => () => useInspectorExpanded.setState({ activeExtensionId: null }), [])
 
   // Drag-to-reposition from the header. `offset` is a translation applied on
   // top of the default `top-20 right-4` anchor; null until first dragged.
@@ -233,7 +187,7 @@ export function PanelWrapper({
       if ((e.target as HTMLElement).closest('button, input, label')) return
       const rect = panelRef.current?.getBoundingClientRect()
       if (!rect) return
-      const bounds = getDragBounds(panelRef.current, inStack)
+      const bounds = getDragBounds(panelRef.current)
       const base = offset ?? { x: 0, y: 0 }
       dragRef.current = {
         startX: e.clientX,
@@ -253,7 +207,7 @@ export function PanelWrapper({
       setIsDragging(true)
       e.currentTarget.setPointerCapture(e.pointerId)
     },
-    [offset, inStack],
+    [offset],
   )
 
   const handleHeaderPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
@@ -284,37 +238,22 @@ export function PanelWrapper({
     [handleCardToggle],
   )
 
-  // Keep repositioned panels inside the available space as the card or viewer resizes.
+  // Expanding can grow the panel past an edge if it was dragged there while
+  // collapsed — nudge it back inside the viewer bounds.
   useLayoutEffect(() => {
-    if (isMobile) return
+    if (isMobile || collapsed) return
     const el = panelRef.current
     if (!el) return
-    const fit = () => {
-      const rect = el.getBoundingClientRect()
-      const bounds = getDragBounds(el, inStack)
-      const left = clamp(rect.left, bounds.left + DRAG_MARGIN, bounds.right - rect.width - DRAG_MARGIN)
-      const top = clamp(rect.top, bounds.top + DRAG_MARGIN, bounds.bottom - rect.height - DRAG_MARGIN)
-      const dx = left - rect.left
-      const dy = top - rect.top
-      if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
-        setOffset((prev) => ({ x: (prev?.x ?? 0) + dx, y: (prev?.y ?? 0) + dy }))
-      }
+    const rect = el.getBoundingClientRect()
+    const bounds = getDragBounds(el)
+    const left = clamp(rect.left, bounds.left + DRAG_MARGIN, bounds.right - rect.width - DRAG_MARGIN)
+    const top = clamp(rect.top, bounds.top + DRAG_MARGIN, bounds.bottom - rect.height - DRAG_MARGIN)
+    const dx = left - rect.left
+    const dy = top - rect.top
+    if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
+      setOffset((prev) => ({ x: (prev?.x ?? 0) + dx, y: (prev?.y ?? 0) + dy }))
     }
-    fit()
-    const resize = new ResizeObserver(fit)
-    resize.observe(el)
-    const stack = el.closest('[data-right-stack]')
-    if (stack) {
-      resize.observe(stack)
-      const card = stack.querySelector('[data-right-stack-card]')
-      if (card) resize.observe(card)
-    }
-    window.addEventListener('resize', fit)
-    return () => {
-      resize.disconnect()
-      window.removeEventListener('resize', fit)
-    }
-  }, [collapsed, isMobile, inStack])
+  }, [collapsed, isMobile])
 
   return (
     <div
@@ -325,7 +264,7 @@ export function PanelWrapper({
           : inStack
             ? // In the shared right column: it grows down and scrolls on itself,
               // leaving the shortcuts card below it its room (`right-stack.tsx`).
-              'pointer-events-auto flex max-h-[var(--inspector-available-height)] min-h-0 flex-[0_1_auto] flex-col overflow-hidden rounded-xl border border-border/50 bg-sidebar/95 shadow-2xl backdrop-blur-xl dark:text-foreground'
+              'pointer-events-auto flex max-h-full min-h-0 flex-[0_1_auto] flex-col overflow-hidden rounded-xl border border-border/50 bg-sidebar/95 shadow-2xl backdrop-blur-xl dark:text-foreground'
           // Cap height at `100dvh - 154px` so a tall panel's bottom edge
           // aligns flush with the top of the floating bottom action bar.
           // Combined with `top-20` (80px), the panel's bottom sits at
@@ -352,7 +291,7 @@ export function PanelWrapper({
       {!isMobile && (
         <div
           className={cn(
-            'relative flex shrink-0 select-none items-center justify-between px-3 py-3',
+            'relative flex select-none items-center justify-between px-3 py-3',
             !collapsed && 'border-border/50 border-b',
             isDragging ? 'cursor-grabbing' : 'cursor-grab',
           )}
@@ -364,6 +303,7 @@ export function PanelWrapper({
           <div className={cn('flex min-w-0 items-center gap-2', titleContent && 'flex-1 pr-2')}>
             {onBack && (
               <button
+                aria-label={i18n._({ id: 'editor.panels.panelWrapper.back', message: 'Back' })}
                 className="mr-1 flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-black/8 dark:hover:bg-[#3e3e3e] hover:text-foreground"
                 onClick={onBack}
                 type="button"
@@ -411,6 +351,7 @@ export function PanelWrapper({
           <div className="flex items-center gap-1">
             {onReset && (
               <button
+                aria-label={i18n._({ id: 'editor.panels.panelWrapper.reset', message: 'Reset' })}
                 className="flex h-7 w-7 items-center justify-center rounded-md bg-black/4 dark:bg-[#2C2C2E] text-muted-foreground transition-colors hover:bg-black/8 dark:hover:bg-[#3e3e3e] hover:text-foreground"
                 onClick={onReset}
                 type="button"
@@ -418,37 +359,9 @@ export function PanelWrapper({
                 <RotateCcw className="h-4 w-4" />
               </button>
             )}
-            {/* Extension mode buttons — one icon per registered inspector
-                extension, left of the chevron. Click swaps the card body to
-                ONLY that extension's content (either/or with the regular
-                controls); the active icon (highlighted) or the chevron
-                returns to the regular controls. */}
-            {extensions.filter((extension) => extension !== primaryExtension).map((extension) => {
-              const isActive = !collapsed && activeExtensionId === extension.id
-              return (
-                <button
-                  aria-label={isActive ? `Close ${extension.title}` : `Open ${extension.title}`}
-                  aria-pressed={isActive}
-                  className={cn(
-                    'flex h-7 w-7 items-center justify-center rounded-md transition-colors',
-                    isActive
-                      ? 'bg-cyan-500/20 text-cyan-700 dark:text-cyan-400 hover:bg-cyan-500/30'
-                      : 'bg-black/4 dark:bg-[#2C2C2E] text-muted-foreground hover:bg-black/8 dark:hover:bg-[#3e3e3e] hover:text-foreground',
-                  )}
-                  key={extension.id}
-                  onClick={() =>
-                    applyMode(toggleExtension({ collapsed, activeExtensionId }, extension.id))
-                  }
-                  title={extension.title}
-                  type="button"
-                >
-                  {renderExtensionIcon(extension.icon)}
-                </button>
-              )
-            })}
             <button
               aria-expanded={!collapsed}
-              aria-label={collapsed ? 'Expand panel' : 'Collapse panel'}
+              aria-label={collapsed ? i18n._({ id: 'editor.panels.panelWrapper.expandPanel', message: 'Expand panel' }) : i18n._({ id: 'editor.panels.panelWrapper.collapsePanel', message: 'Collapse panel' })}
               className="flex h-7 w-7 items-center justify-center rounded-md bg-black/4 dark:bg-[#2C2C2E] text-muted-foreground transition-colors hover:bg-black/8 dark:hover:bg-[#3e3e3e] hover:text-foreground"
               onClick={handleCardToggle}
               type="button"
@@ -459,6 +372,7 @@ export function PanelWrapper({
             </button>
             {onClose && (
               <button
+                aria-label={i18n._({ id: 'editor.panels.panelWrapper.close', message: 'Close' })}
                 className="flex h-7 w-7 items-center justify-center rounded-md bg-black/4 dark:bg-[#2C2C2E] text-muted-foreground transition-colors hover:bg-black/8 dark:hover:bg-[#3e3e3e] hover:text-foreground"
                 onClick={onClose}
                 type="button"
@@ -496,10 +410,10 @@ export function PanelWrapper({
               )}
               {children}
               {inspectedIds.length > 0 && (
-                <PanelSection title="Collections">
+                <PanelSection title={i18n._({ id: 'editor.panels.panelWrapper.collections', message: 'Collections' })}>
                   <ActionGroup>
                     <CollectionsPopover nodeIds={inspectedIds}>
-                      <ActionButton label="Manage collections…" />
+                      <ActionButton label={i18n._({ id: 'editor.panels.panelWrapper.manageCollections', message: 'Manage collections…' })} />
                     </CollectionsPopover>
                   </ActionGroup>
                 </PanelSection>
@@ -529,30 +443,6 @@ export function PanelWrapper({
 }
 
 // ─── Plugin inspector extensions ──────────────────────────────────────
-
-/** 16px icon for an extension's header button — mirrors the parametric
- *  inspector's `renderIcon` (plain <img> so no next/image server deps). */
-function renderExtensionIcon(ref: IconRef): React.ReactNode {
-  if (ref.kind === 'url') {
-    return <IconRefImage className="h-4 w-4 shrink-0" src={ref.src} />
-  }
-  if (ref.kind === 'iconify') {
-    return <Icon height={16} icon={ref.name} width={16} />
-  }
-  if (ref.kind === 'svg') {
-    return (
-      <svg height={16} viewBox={ref.viewBox} width={16}>
-        <path d={ref.path} fill="currentColor" />
-      </svg>
-    )
-  }
-  const LazyIcon = lazy(ref.module)
-  return (
-    <Suspense fallback={null}>
-      <LazyIcon />
-    </Suspense>
-  )
-}
 
 // `React.lazy` once per loader so the resolved component keeps a stable
 // identity across renders — same WeakMap pattern as `resolveCustomPanel`
@@ -605,14 +495,14 @@ function InspectorExtensionContent({
   extension: InspectorExtension
   nodeId: AnyNodeId
 }) {
+  const i18n = usePascalI18n()
   const node = useScene((s) => s.nodes[nodeId])
   if (!node) return null
   const Extension = resolveExtensionComponent(extension)
   return (
     <ErrorBoundary fallback={
       <p className="p-1 text-muted-foreground text-xs">
-        “{extension.title}” hit an error and was unloaded for this session.
-      </p>
+        {i18n._({ id: 'editor.panels.panelWrapper.titleHitAnErrorAndWas', message: '“{title}” hit an error and was unloaded for this session.', values: { title: extension.title } })}</p>
     }>
       <Suspense fallback={null}>
         <Extension node={node} />

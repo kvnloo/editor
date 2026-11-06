@@ -1,17 +1,15 @@
 import type { ColumnNode } from '@pascal-app/core'
-export function getSegments(node: Pick<ColumnNode, 'crossSection'>) {
+export function getSegments(node: ColumnNode) {
   if (node.crossSection === 'octagonal') return 8
   if (node.crossSection === 'sixteen-sided') return 16
   return 32
 }
 
-function getShaftProfile(node: Pick<ColumnNode, 'shaftProfile' | 'shaftTaper'>) {
+function getShaftProfile(node: ColumnNode) {
   return node.shaftProfile ?? (node.shaftTaper > 0 ? 'tapered' : 'straight')
 }
 
-export function getShaftSegmentCount(
-  node: Pick<ColumnNode, 'shaftProfile' | 'shaftTaper' | 'shaftTwistStep' | 'shaftSegmentCount'>,
-) {
+export function getShaftSegmentCount(node: ColumnNode) {
   const shaftProfile = getShaftProfile(node)
   const shaftTaper = node.shaftTaper ?? 0
   const hasTwist = Math.abs(node.shaftTwistStep ?? 0) > 0.001
@@ -23,17 +21,11 @@ export function getShaftSegmentCount(
   )
 }
 
-export function getShaftTwistRadians(node: Pick<ColumnNode, 'shaftTwistStep'>, index: number) {
+export function getShaftTwistRadians(node: ColumnNode, index: number) {
   return ((node.shaftTwistStep ?? 0) * Math.PI * index) / 180
 }
 
-export function getShaftScaleAt(
-  node: Pick<
-    ColumnNode,
-    'shaftProfile' | 'shaftTaper' | 'shaftStartScale' | 'shaftEndScale' | 'shaftBulge'
-  >,
-  t: number,
-) {
+export function getShaftScaleAt(node: ColumnNode, t: number) {
   const shaftProfile = getShaftProfile(node)
   const shaftTaper = Math.min(node.shaftTaper ?? 0, 0.85)
   const startScale = node.shaftStartScale ?? 0.72
@@ -119,7 +111,7 @@ export function columnCapitalBlocks(node: ColumnNode, y: number, height: number)
       return {
         kind: 'box',
         y: y + (index * height) / count,
-        height: height / count,
+        height: (height / count) * 1.01,
         width: node.width * Math.max(0.5, widthScale - spread),
         depth: node.depth * Math.max(0.5, depthScale - spread),
       }

@@ -82,7 +82,6 @@ const turbineVentHandles: HandleDescriptor<TurbineVentNodeType>[] = [
  */
 export const turbineVentDefinition: NodeDefinition<typeof TurbineVentNode> = {
   kind: 'turbine-vent',
-  snapProfile: 'item',
   schemaVersion: 3,
   schema: TurbineVentNode,
   category: 'structure',

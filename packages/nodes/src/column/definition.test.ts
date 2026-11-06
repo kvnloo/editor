@@ -1,10 +1,13 @@
-import { afterEach, describe, expect, test } from 'bun:test'
-import { ColumnNode, createSceneApi, useScene } from '@pascal-app/core'
-import { columnDefinition } from './definition'
-import { columnEditPatch } from './edit-policy'
-
-const originalScene = useScene.getState()
-afterEach(() => useScene.setState(originalScene, true))
+import { beforeEach, describe, expect, test } from 'bun:test'
+import {
+  ColumnNode,
+  isMovable,
+  loadPlugin,
+  movePlanToward,
+  moveToward,
+  nodeRegistry,
+} from '@pascal-app/core'
+import { builtinPlugin, columnDefinition } from '../index'
 
 describe('column definition', () => {
   test('keeps only user-owned handles for lean-to managed columns', () => {
@@ -43,25 +46,53 @@ describe('column definition', () => {
   })
 })
 
-test('round handle edits keep inspector dimensions in sync without rewriting the loaded node', () => {
-  const column = ColumnNode.parse({ radius: 0.3, width: 0.44, depth: 0.44 })
-  const handles =
-    typeof columnDefinition.handles === 'function'
-      ? columnDefinition.handles(column)
-      : columnDefinition.handles!
-  const radius = handles.find((h) => h.kind === 'radial-resize')!
-  const scene = createSceneApi(useScene)
-  useScene.setState({ nodes: { [column.id]: column } })
-  expect(radius.apply(column, 0.5, scene)).toMatchObject({ radius: 0.5, width: 1, depth: 1 })
-  expect(column.width).toBe(0.44)
-})
+describe('column movement from the built-in plugin', () => {
+  beforeEach(async () => {
+    nodeRegistry._reset()
+    await loadPlugin(builtinPlugin)
+  })
 
-test('switching to square normalizes both axes, and managed posts reject layout edits', () => {
-  const column = ColumnNode.parse({ crossSection: 'rectangular', width: 1, depth: 2 })
-  expect(columnEditPatch(column, { crossSection: 'square' })).toMatchObject({ width: 1, depth: 1 })
-  const managed = { ...column, metadata: { managedByLeanTo: 'canopy', leanToRole: 'post' } }
-  expect(
-    columnEditPatch(managed, { width: 2, radius: 1, position: [1, 0, 0], rotation: 1 }),
-  ).toEqual({ rotation: 1 })
-  expect(columnDefinition.capabilities.movable?.override?.({ node: managed })).toBeNull()
+  test('managed vertical posts keep their positions in 3D and floor plan', () => {
+    const post = ColumnNode.parse({
+      position: [0, 0.3, 0],
+      metadata: { managedByLeanTo: 'canopy', leanToRole: 'post' },
+    })
+    expect(isMovable(post)).toBe(false)
+    expect(moveToward(post, [0, 0.3, 0], [1, 4, 2], { gridSnap: false })).toEqual([0, 0.3, 0])
+    expect(movePlanToward(post, 0.3, [0, 0], [1, 2], { gridSnap: false })).toEqual([0, 0])
+
+    const session = columnDefinition.floorplanMoveTarget?.({
+      node: post,
+      nodes: { [post.id]: post },
+    })
+    expect(session?.affectedIds).toEqual([])
+    session?.apply({
+      planPoint: [1, 2],
+      modifiers: { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false },
+    })
+    expect(session?.canCommit()).toBe(false)
+  })
+
+  test('managed K-brace posts cannot move in the floor plan', () => {
+    const post = ColumnNode.parse({
+      supportStyle: 'k-brace',
+      position: [2, 0.3, 1],
+      metadata: { managedByLeanTo: 'canopy', leanToRole: 'post' },
+    })
+    expect(isMovable(post)).toBe(false)
+    expect(movePlanToward(post, 0.3, [2, 1], [2.5, 3], { gridSnap: false })).toEqual([2, 1])
+    const session = columnDefinition.floorplanMoveTarget?.({
+      node: post,
+      nodes: { [post.id]: post },
+    })
+    expect(session?.affectedIds).toEqual([])
+    expect(session?.canCommit()).toBe(false)
+  })
+
+  test('unmanaged columns retain X/Z translation with Y locked', () => {
+    const column = ColumnNode.parse({ position: [0, 0.3, 0] })
+    expect(isMovable(column)).toBe(true)
+    expect(moveToward(column, [0, 0.3, 0], [1, 4, 2], { gridSnap: false })).toEqual([1, 0.3, 2])
+    expect(movePlanToward(column, 0.3, [0, 0], [1, 2], { gridSnap: false })).toEqual([1, 2])
+  })
 })

@@ -28,7 +28,6 @@ export type ReshapeKind =
   | 'tangent'
   // A kind's own reshape (wall 'split'): mounted from `def.affordanceTools[reshape]`.
   | 'split'
-  | 'trim'
 
 export type InteractionScope =
   | { kind: 'idle' }

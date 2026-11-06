@@ -1,7 +1,6 @@
 import {
   getActiveRoofHeight,
   getPitchFromActiveRoofHeight,
-  MAX_ROOF_PITCH,
   type RoofSegmentNode,
 } from './roof-segment'
 
@@ -26,5 +25,5 @@ export function getRoofSegmentResizePatch(
   if (node.roofType === 'barrel')
     return { depth: dimension, barrelRise: Math.min(dimension / 2, rise), position }
   const pitch = getPitchFromActiveRoofHeight({ ...node, depth: dimension, roofHeight: rise })
-  return { depth: dimension, pitch: Math.max(0, Math.min(MAX_ROOF_PITCH, pitch)), position }
+  return { depth: dimension, pitch: Math.max(0, Math.min(85, pitch)), position }
 }

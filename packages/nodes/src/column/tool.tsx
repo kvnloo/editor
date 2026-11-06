@@ -40,6 +40,8 @@ import {
   collectStructuralGridAxes,
   resolveStructuralGridSnap,
 } from '../structural-grid/coordination'
+import { framingPostToolChoices } from './post-placement'
+import { FramingPostTool } from './post-tool'
 import { ColumnPreview } from './renderer'
 
 const DEFAULT_COLUMN_PRESET_ID = 'basicPillar' satisfies ColumnPresetId
@@ -65,7 +67,7 @@ function createColumnFromPreset(presetId: ColumnPresetId, position: [number, num
  * `nodes`. Wired via `def.tool`, so `ToolManager`'s registry-first path
  * mounts it and the legacy `<ColumnTool>` branch no longer fires.
  */
-const ColumnTool = () => {
+const PillarTool = () => {
   const activeLevelId = useViewer((state) => state.selection.levelId)
   const camera = useThree((state) => state.camera)
   const cameraRef = useRef(camera)
@@ -91,16 +93,7 @@ const ColumnTool = () => {
     // here and refreshed after each placement so a just-placed column becomes a
     // target for the next one. `previewNode.id` never collides with a scene
     // node, so nothing real is excluded.
-    let candidateNodes = useScene.getState().nodes
-    let alignmentCandidates = collectAlignmentAnchors(candidateNodes, previewNode.id)
-    let structuralGrids = collectStructuralGridAxes(candidateNodes, activeLevelId)
-    const refreshCandidates = () => {
-      const nodes = useScene.getState().nodes
-      if (nodes === candidateNodes) return
-      candidateNodes = nodes
-      alignmentCandidates = collectAlignmentAnchors(nodes, previewNode.id)
-      structuralGrids = collectStructuralGridAxes(nodes, activeLevelId)
-    }
+    let alignmentCandidates = collectAlignmentAnchors(useScene.getState().nodes, previewNode.id)
 
     const pointedSurfaceFor = (event: FloorPlacementClickTriggerEvent) =>
       typeof HTMLCanvasElement !== 'undefined' &&
@@ -114,8 +107,11 @@ const ColumnTool = () => {
       position: [number, number, number],
       surface: PointerSupportSurface | null,
     ) => {
-      const column = { ...previewNode, position, parentId: activeLevelId }
-      const nodes = useScene.getState().nodes
+      const column = ColumnNode.parse({
+        ...createColumnFromPreset(DEFAULT_COLUMN_PRESET_ID, position),
+        parentId: activeLevelId,
+      })
+      const nodes = { ...useScene.getState().nodes, [column.id]: column }
       const patch = surface?.sourceNodeId
         ? resolveFrozenFloorPlacementPatch(column, nodes, {
             position,
@@ -133,7 +129,6 @@ const ColumnTool = () => {
     }
 
     const onGridMove = (event: GridEvent) => {
-      refreshCandidates()
       if (!cursorVisibleRef.current) {
         cursorVisibleRef.current = true
         setCursorVisible(true)
@@ -153,7 +148,10 @@ const ColumnTool = () => {
       })
       const structuralSnap =
         isGridSnapActive() || isMagneticSnapActive()
-          ? resolveStructuralGridSnap([alignedPosition[0], alignedPosition[2]], structuralGrids)
+          ? resolveStructuralGridSnap(
+              [alignedPosition[0], alignedPosition[2]],
+              collectStructuralGridAxes(useScene.getState().nodes, activeLevelId),
+            )
           : null
       const planPosition: [number, number, number] = structuralSnap
         ? [structuralSnap.point[0], alignedPosition[1], structuralSnap.point[1]]
@@ -199,7 +197,6 @@ const ColumnTool = () => {
     }
 
     const commitAtCursor = (event: FloorPlacementClickTriggerEvent) => {
-      refreshCandidates()
       const pointed = pointedSurfaceFor(event) ?? supportSurfaceRef.current
       supportSurfaceRef.current = pointed
       const fallbackPosition =
@@ -212,7 +209,10 @@ const ColumnTool = () => {
         )
       const structuralSnap =
         isGridSnapActive() || isMagneticSnapActive()
-          ? resolveStructuralGridSnap([fallbackPosition[0], fallbackPosition[2]], structuralGrids)
+          ? resolveStructuralGridSnap(
+              [fallbackPosition[0], fallbackPosition[2]],
+              collectStructuralGridAxes(useScene.getState().nodes, activeLevelId),
+            )
           : null
       const planPosition: [number, number, number] = structuralSnap
         ? [structuralSnap.point[0], 0, structuralSnap.point[1]]
@@ -221,7 +221,6 @@ const ColumnTool = () => {
       const committedColumn = ColumnNode.parse({
         ...column,
         ...patch,
-        id: undefined,
       })
       useScene.getState().createNode(committedColumn, activeLevelId)
       useViewer.getState().setSelection({ selectedIds: [committedColumn.id] })
@@ -230,7 +229,7 @@ const ColumnTool = () => {
       usePlacementPreview.getState().clear()
       if (useEditor.getState().getContinuation('point') === 'repeat') {
         // The placed column is now a valid alignment target for the next one.
-        refreshCandidates()
+        alignmentCandidates = collectAlignmentAnchors(useScene.getState().nodes, previewNode.id)
       } else {
         cursorVisibleRef.current = false
         setCursorVisible(false)
@@ -262,6 +261,19 @@ const ColumnTool = () => {
       <ColumnPreview node={previewNode} />
     </group>
   )
+}
+
+/**
+ * The column tool, or the Post tool while the Build panel's Post tile has armed it with a framing
+ * post's fields (`toolDefaults.column`, `framingPostToolChoices`).
+ */
+const ColumnTool = () => {
+  const size = useEditor((state) => framingPostToolChoices(state.toolDefaults.column)?.size ?? null)
+  const base = useEditor(
+    (state) => framingPostToolChoices(state.toolDefaults.column)?.base ?? 'none',
+  )
+  const choices = useMemo(() => (size ? { size, base } : null), [size, base])
+  return choices ? <FramingPostTool choices={choices} /> : <PillarTool />
 }
 
 export default ColumnTool

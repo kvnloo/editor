@@ -113,7 +113,6 @@ const eyebrowVentHandles: HandleDescriptor<EyebrowVentNodeType>[] = [
  */
 export const eyebrowVentDefinition: NodeDefinition<typeof EyebrowVentNode> = {
   kind: 'eyebrow-vent',
-  snapProfile: 'item',
   schemaVersion: 3,
   schema: EyebrowVentNode,
   category: 'structure',

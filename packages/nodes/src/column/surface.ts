@@ -43,10 +43,8 @@ export function columnTopSurfaces(node: ColumnNode): DeclaredHostSurface[] {
   let region: SurfaceRegion
   if (cap) {
     y = cap.y + cap.height
-    if (cap.kind === 'round') {
-      const bevel = Math.min(node.edgeSoftness, cap.height * 0.35, cap.radius! * 0.35)
-      region = roundRegion(cap.radius! - bevel, getSegments(node))
-    } else {
+    if (cap.kind === 'round') region = roundRegion(cap.radius!, getSegments(node))
+    else {
       const bevel = Math.min(
         Math.max(0, node.edgeSoftness ?? 0.025),
         Math.min(cap.width!, cap.depth!, cap.height) * 0.35,
@@ -55,22 +53,17 @@ export function columnTopSurfaces(node: ColumnNode): DeclaredHostSurface[] {
     }
   } else {
     const segments = getShaftSegmentCount(node)
-    const scale = getShaftScaleAt(node, 1)
+    const scale = getShaftScaleAt(node, (segments - 0.5) / segments)
     const yaw = getShaftTwistRadians(node, segments - 1)
-    y = layout.shaftY + layout.shaftHeight
+    y = layout.shaftY + layout.shaftHeight + (layout.shaftHeight / segments) * 0.015
     if (node.crossSection === 'square' || node.crossSection === 'rectangular') {
       const corner =
         Math.min(
           Math.max(0, node.shaftCornerRadius ?? 0.035),
           Math.min(node.width, node.depth) * 0.45,
         ) * scale
-      const bevel = Math.min(
-        node.edgeSoftness,
-        layout.shaftHeight * 0.35,
-        (Math.min(node.width, node.depth) / 2) * Math.min(getShaftScaleAt(node, 0), scale) * 0.35,
-      )
-      const x = (node.width * scale) / 2 - corner - bevel
-      const z = (node.depth * scale) / 2 - corner - bevel
+      const x = (node.width * scale) / 2 - corner
+      const z = (node.depth * scale) / 2 - corner
       region = {
         kind: 'polygon',
         points: [
@@ -83,18 +76,7 @@ export function columnTopSurfaces(node: ColumnNode): DeclaredHostSurface[] {
           -px! * Math.sin(yaw) + pz! * Math.cos(yaw),
         ]),
       }
-    } else {
-      const fluted =
-        node.crossSection === 'round' && (node.fluteCount > 0 || node.shaftDetail === 'fluted')
-      const inset =
-        (fluted ? Math.min(node.fluteDepth, node.radius * scale * 0.35) : 0) +
-        Math.min(
-          node.edgeSoftness,
-          layout.shaftHeight * 0.35,
-          node.radius * Math.min(getShaftScaleAt(node, 0), scale) * 0.35,
-        )
-      region = roundRegion(node.radius * scale - inset, getSegments(node), yaw)
-    }
+    } else region = roundRegion(node.radius * scale, getSegments(node), yaw)
   }
   return [{ id: 'top', position: [0, y, 0], normal: [0, 1, 0], region }]
 }
