@@ -337,6 +337,7 @@ export {
   withFloorStepOverride,
   withoutFloorStepOverrideKeys,
 } from './lib/floor-step-finish'
+export { findHierarchyCycles, wouldCreateHierarchyCycle } from './lib/hierarchy'
 export {
   FOUNDATION_CONSTRUCTIONS,
   type FoundationConstruction,

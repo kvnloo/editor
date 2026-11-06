@@ -1,5 +1,6 @@
 import { levelBuildingId } from '../building/level-duplication'
 import { levelGradeStanding } from '../lib/grade-standing'
+import { findHierarchyCycles } from '../lib/hierarchy'
 import { groundSeat } from '../lib/ground-seat'
 import { getLevelDisplayName } from '../lib/level-name'
 import { HIDDEN_SITE_NOTE } from '../lib/node-visibility'
@@ -74,6 +75,7 @@ export type SceneIssue =
   | RoomFinding
   | { type: string; message: string; severity?: 'info' | 'warning' }
   | { type: 'schema_invalid'; message: string; nodeId: string; path: string }
+  | { type: 'hierarchy_cycle'; message: string; nodeId: string; path: 'parentId' }
   | {
       type: 'schema_unknown_kind'
       message: string
@@ -340,6 +342,7 @@ export const verifyScene: AgentOperation<VerifySceneInput | undefined> = (
   context,
 ) => {
   const { errors, unknownKinds, unread, measured: nodes } = checkSchemas(scene, context.nodeSchema)
+  const hierarchyCycles = findHierarchyCycles(scene)
   const onLevel = (levelId: string) => nodesOnLevel(nodes, levelId)
   const ofType = <T extends AnyNode['type']>(content: readonly AnyNode[], type: T) =>
     content.filter((node): node is Extract<AnyNode, { type: T }> => node.type === type)
@@ -398,6 +401,11 @@ export const verifyScene: AgentOperation<VerifySceneInput | undefined> = (
       nodes[levelId] as AnyNode & { type: 'level' },
     )
   const issues: SceneIssue[] = []
+  for (const cycle of hierarchyCycles) {
+    const message = `hierarchy cycle detected: ${[...cycle, cycle[0]!].join(' -> ')}`
+    for (const nodeId of cycle)
+      issues.push({ type: 'hierarchy_cycle', message, nodeId, path: 'parentId' })
+  }
   const report = (type: string, message: string, informational = false) =>
     issues.push({ type, message, ...(informational ? { severity: 'info' as const } : {}) })
 
@@ -814,7 +822,7 @@ export const verifyScene: AgentOperation<VerifySceneInput | undefined> = (
   return {
     result: {
       ok: true,
-      valid: errors.length === 0,
+      valid: errors.length === 0 && hierarchyCycles.length === 0,
       levelCount: levels.length,
       occupiedStoryCount,
       supportLevelCount: levels.length - occupiedStoryCount,
