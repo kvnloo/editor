@@ -19,6 +19,7 @@ import {
 } from '../components/tools/wall/wall-snap-geometry'
 import useEditor, { isMagneticSnapActive } from '../store/use-editor'
 import { useFloorplanDraftPreview } from '../store/use-floorplan-draft-preview'
+import { useWallDraftTyping } from '../store/use-wall-draft-typing'
 import { sfxEmitter } from './sfx-bus'
 
 /**
@@ -216,6 +217,8 @@ export function addWallPolygonDraftCorner(corner: WallPlanPoint): WallPolygonCor
       WALL_JOIN_SNAP_RADIUS * WALL_JOIN_SNAP_RADIUS
   const next = [...corners, closes ? first : corner]
   setPoints(next)
+  // Each accepted corner consumes its typed length; the next side starts untyped.
+  useWallDraftTyping.getState().clearInput()
   if (closes) return 'closed'
 
   const { virtual, draftWalls, last } = planPolygon(

@@ -10,19 +10,21 @@ import {
   useScene,
   WallNode,
 } from '@pascal-app/core'
-import { useViewer } from '@pascal-app/viewer'
-import useEditor from '../store/use-editor'
-import { useFloorplanDraftPreview } from '../store/use-floorplan-draft-preview'
-import { runUndo } from './history'
-import { sfxEmitter } from './sfx-bus'
 import {
   addWallPolygonDraftCorner,
   commitWallPolygonDraft,
   discardWallPolygonDraft,
-  isWallPolygonDraftOpen,
+  resolveWallDraftClickPoint,
   startWallPolygonDraft,
+  useFloorplanDraftPreview,
+  useWallDraftTyping,
   wallPolygonDraftWalls,
-} from './wall-polygon-draft'
+} from '@pascal-app/editor'
+import { useViewer } from '@pascal-app/viewer'
+import useEditor from '../store/use-editor'
+import { runUndo } from './history'
+import { sfxEmitter } from './sfx-bus'
+import { isWallPolygonDraftOpen } from './wall-polygon-draft'
 
 // Node updates batch their dirty marks on the next frame.
 ;(
@@ -55,6 +57,7 @@ let stopCommits = () => {}
 let stopWrites = () => {}
 
 beforeEach(() => {
+  useWallDraftTyping.getState().clearInput()
   useScene.setState({
     nodes: { [level.id]: level, [existing.id]: existing } as Record<AnyNodeId, AnyNode>,
     rootNodeIds: [levelId],
@@ -76,6 +79,7 @@ beforeEach(() => {
 
 afterEach(() => {
   discardWallPolygonDraft()
+  useWallDraftTyping.getState().clearInput()
   stopCommits()
   stopWrites()
 })
@@ -99,6 +103,52 @@ describe('Polygon room draft', () => {
     // It exists only as draft corners, drawn as ghosts and used as snap targets.
     expect(useFloorplanDraftPreview.getState().wallPolygonDraftPoints).toHaveLength(4)
     expect(wallPolygonDraftWalls()).toHaveLength(3)
+  })
+
+  test('an invalid typed click keeps the polygon and buffer; an accepted corner clears that length', () => {
+    const nodes = useScene.getState().nodes
+    drawThreeSides()
+    const corners = useFloorplanDraftPreview.getState().wallPolygonDraftPoints
+    const typing = useWallDraftTyping.getState()
+    typing.append('0')
+    typing.setProjectedEnd([0, 4])
+
+    const resolveClick = () =>
+      resolveWallDraftClickPoint({
+        start: [0, 3],
+        currentEnd: [0, 4],
+        rawPoint: [7, 3],
+        input: useWallDraftTyping.getState().input,
+        projectedEnd: useWallDraftTyping.getState().projectedEnd,
+        options: { bareUnit: 'm', system: 'metric' },
+      })
+
+    // The 2D and 3D handlers both return before adding a corner on null.
+    const refused = resolveClick()
+    if (refused) addWallPolygonDraftCorner(refused)
+    expect(refused).toBeNull()
+    expect(useFloorplanDraftPreview.getState().wallPolygonDraftPoints).toEqual(corners)
+    expect(wallPolygonDraftWalls()).toHaveLength(3)
+    expect(useWallDraftTyping.getState().input).toBe('0')
+    expect(useWallDraftTyping.getState().projectedEnd).toEqual([0, 4])
+
+    typing.backspace()
+    typing.append('2')
+    const accepted = resolveClick()
+    expect(accepted).toEqual([0, 5])
+    if (!accepted) throw new Error('Expected a valid typed corner')
+    expect(addWallPolygonDraftCorner(accepted)).toBe('open')
+    expect(wallPolygonDraftWalls()).toHaveLength(4)
+    expect(wallPolygonDraftWalls().at(-1)?.end).toEqual([0, 5])
+    expect(useWallDraftTyping.getState().input).toBe('')
+    expect(useWallDraftTyping.getState().projectedEnd).toBeNull()
+    expect(useScene.getState().nodes).toBe(nodes)
+    expect({ sceneWrites, commits, ...history() }).toEqual({
+      sceneWrites: 0,
+      commits: 0,
+      past: 0,
+      future: 0,
+    })
   })
 
   test('each placed corner plays the start tick; closing plays the build cue once', () => {
