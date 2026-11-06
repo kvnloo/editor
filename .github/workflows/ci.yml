@@ -114,6 +114,21 @@ jobs:
       - name: Build
         run: bun run build
 
+      # Runs against Next's real response/proxy after build, with a disposable scene store.
+      - name: Browser hydration for Chinese request locales
+        env:
+          PASCAL_AUTH: proxy
+          PASCAL_DATA_DIR: ${{ runner.temp }}/pascal-locale-hydration
+          PASCAL_HYDRATION_ORIGIN: http://127.0.0.1:3002
+        run: |
+          bunx playwright-core install --with-deps chromium
+          mkdir -p "$PASCAL_DATA_DIR"
+          PORT=3002 bun --cwd apps/editor run start > "$RUNNER_TEMP/pascal-locale-hydration.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true; cat "$RUNNER_TEMP/pascal-locale-hydration.log"' EXIT
+          curl --fail --silent --show-error --retry 30 --retry-connrefused --retry-delay 1 --output /dev/null "$PASCAL_HYDRATION_ORIGIN/api/health"
+          bun test apps/editor/proxy.browser.test.ts
+
   cli-smoke:
     needs: changes
     if: needs.changes.outputs.runtime == 'true'
