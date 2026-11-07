@@ -2,7 +2,7 @@ import type { DeepZoomZipArtifactHost, DeepZoomZipTemporaryArtifact } from './de
 
 const STAGING_DIRECTORY = '.deep-zoom-zip-staging'
 const STAGING_LOCK = 'pascal-deep-zoom-zip-staging-v1'
-const TEMPORARY_NAME = /^dzi-[0-9a-f-]{36}\.part$/
+const TEMPORARY_NAME = /^dzi-locked-[0-9a-f-]{36}\.part$/
 
 type MovableFileHandle = FileSystemFileHandle & {
   move?: (directory: FileSystemDirectoryHandle, name: string) => Promise<void>
@@ -11,7 +11,7 @@ type MovableFileHandle = FileSystemFileHandle & {
 type ExclusiveLockManager = {
   request(
     name: string,
-    options: { mode: 'exclusive' },
+    options: { mode: 'exclusive'; signal?: AbortSignal },
     callback: () => Promise<void>,
   ): Promise<unknown>
 }
@@ -29,6 +29,8 @@ export interface BrowserDeepZoomZipHostOptions {
   requireStagedFile?: boolean
   /** Defaults to the browser's cross-tab Web Locks manager. */
   lockManager?: ExclusiveLockManager
+  /** Cancels a queued Web Lock before a staging file is created. */
+  signal?: AbortSignal
 }
 
 function isNotFound(error: unknown): boolean {
@@ -71,7 +73,11 @@ async function removeIfPresent(directory: FileSystemDirectoryHandle, name: strin
  * throughout staging and the final existence check + move to prevent cooperating
  * tabs from overwriting each other's completed ZIPs.
  */
-async function acquireStageLock(manager: ExclusiveLockManager): Promise<() => void> {
+async function acquireStageLock(
+  manager: ExclusiveLockManager,
+  signal?: AbortSignal,
+): Promise<() => void> {
+  signal?.throwIfAborted()
   let acquired!: () => void
   let failed!: (error: unknown) => void
   const ready = new Promise<void>((resolve, reject) => {
@@ -84,7 +90,7 @@ async function acquireStageLock(manager: ExclusiveLockManager): Promise<() => vo
   })
   try {
     void manager
-      .request(STAGING_LOCK, { mode: 'exclusive' }, async () => {
+      .request(STAGING_LOCK, { mode: 'exclusive', signal }, async () => {
         acquired()
         await held
       })
@@ -157,15 +163,19 @@ function memoryStage(
 async function fileStage(
   directory: FileSystemDirectoryHandle,
   locks: ExclusiveLockManager | undefined,
+  signal?: AbortSignal,
 ): Promise<DeepZoomZipTemporaryArtifact | undefined> {
   if (!globalThis.crypto?.randomUUID || !locks) return undefined
 
-  const unlock = await acquireStageLock(locks)
+  const unlock = await acquireStageLock(locks, signal)
   try {
+    signal?.throwIfAborted()
     // The lease excludes live stages in other same-origin tabs while recovering after reload.
     const staging = await directory.getDirectoryHandle(STAGING_DIRECTORY, { create: true })
     await clearAbandonedStages(staging)
-    const temporaryName = 'dzi-' + globalThis.crypto.randomUUID() + '.part'
+    signal?.throwIfAborted()
+    // Only lock-era parts are reaped; a previous open tab may still write a legacy part.
+    const temporaryName = 'dzi-locked-' + globalThis.crypto.randomUUID() + '.part'
     const file = (await staging.getFileHandle(temporaryName, { create: true })) as MovableFileHandle
 
     if (typeof file.move !== 'function' || typeof file.isSameEntry !== 'function') {
@@ -270,7 +280,7 @@ export async function createBrowserDeepZoomZipArtifactHost(
   return {
     async stage() {
       if (directory) {
-        const stagedFile = await fileStage(directory, locks)
+        const stagedFile = await fileStage(directory, locks, options.signal)
         if (stagedFile) return stagedFile
       }
       if (options.requireStagedFile) {
@@ -289,7 +299,7 @@ export async function createBrowserDeepZoomZipArtifactHost(
     async recoverAbandonedStages() {
       if (!directory) return 0
       if (!locks) throw new Error('DeepZoom ZIP recovery requires cross-tab Web Locks')
-      const unlock = await acquireStageLock(locks)
+      const unlock = await acquireStageLock(locks, options.signal)
       try {
         const staging = await directory.getDirectoryHandle(STAGING_DIRECTORY, { create: true })
         return await clearAbandonedStages(staging)

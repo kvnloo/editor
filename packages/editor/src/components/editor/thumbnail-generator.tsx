@@ -1142,19 +1142,25 @@ export const ThumbnailGenerator = ({
               }
               assertCaptureCurrent()
               if (!pipeline) throw new Error('Snapshot renderer is not ready. Try again.')
-              const host = await createBrowserDeepZoomZipArtifactHost({
-                directory: exportAuthority.directory,
-                requireStagedFile: true,
-              })
-              assertCaptureCurrent()
-              const filename = 'capture-' + globalThis.crypto.randomUUID() + '.deepzoom.zip'
-              const sink = await createStagedGigapixelArtifactSink(host, filename)
               const controller = new AbortController()
               const abortFromAgent = () => controller.abort(agent?.signal?.reason)
               agent?.signal?.addEventListener('abort', abortFromAgent, { once: true })
               if (agent?.signal?.aborted) abortFromAgent()
               activeGigapixelCapture.current = controller
+              let stagedSink: Awaited<ReturnType<typeof createStagedGigapixelArtifactSink>> | undefined
               try {
+                controller.signal.throwIfAborted()
+                const host = await createBrowserDeepZoomZipArtifactHost({
+                  directory: exportAuthority.directory,
+                  requireStagedFile: true,
+                  signal: controller.signal,
+                })
+                assertCaptureCurrent()
+                controller.signal.throwIfAborted()
+                const filename = 'capture-' + globalThis.crypto.randomUUID() + '.deepzoom.zip'
+                const sink = await createStagedGigapixelArtifactSink(host, filename)
+                stagedSink = sink
+                controller.signal.throwIfAborted()
                 assertCaptureCurrent()
                 const stats = await streamGigapixelCapture(
                   {
@@ -1276,13 +1282,15 @@ export const ThumbnailGenerator = ({
                 }
                 return
               } catch (error) {
-                try {
-                  await sink.rollback()
-                } catch (rollbackError) {
-                  throw new AggregateError(
-                    [error, rollbackError],
-                    'Gigapixel capture delivery and rollback failed',
-                  )
+                if (stagedSink) {
+                  try {
+                    await stagedSink.rollback()
+                  } catch (rollbackError) {
+                    throw new AggregateError(
+                      [error, rollbackError],
+                      'Gigapixel capture delivery and rollback failed',
+                    )
+                  }
                 }
                 throw error
               } finally {

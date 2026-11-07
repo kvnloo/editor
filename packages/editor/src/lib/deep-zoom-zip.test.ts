@@ -463,11 +463,47 @@ function createOpfsFixture(moveFailure?: Error) {
   let stageRemovals = 0
   const notFound = () => ({ name: 'NotFoundError' })
   let previous: Promise<void> = Promise.resolve()
+  const lockRequests: { signal?: AbortSignal }[] = []
+  let secondRequested!: () => void
+  const secondLockRequested = new Promise<void>((resolve) => {
+    secondRequested = resolve
+  })
   const lockManager = {
-    request(_name: string, _options: { mode: 'exclusive' }, callback: () => Promise<void>) {
-      const pending = previous.then(callback)
+    request(
+      _name: string,
+      options: { mode: 'exclusive'; signal?: AbortSignal },
+      callback: () => Promise<void>,
+    ) {
+      lockRequests.push({ signal: options.signal })
+      if (lockRequests.length === 2) secondRequested()
+      let queued = true
+      const pending = previous.then(async () => {
+        queued = false
+        options.signal?.throwIfAborted()
+        await callback()
+      })
       previous = pending.then(() => undefined, () => undefined)
-      return pending
+      if (!options.signal) return pending
+      const signal = options.signal
+      return new Promise<void>((resolve, reject) => {
+        const onAbort = () => {
+          if (queued) {
+            reject(signal.reason ?? new DOMException('Lock request aborted', 'AbortError'))
+          }
+        }
+        signal.addEventListener('abort', onAbort, { once: true })
+        if (signal.aborted) onAbort()
+        void pending.then(
+          () => {
+            signal.removeEventListener('abort', onAbort)
+            resolve()
+          },
+          (error) => {
+            signal.removeEventListener('abort', onAbort)
+            reject(error)
+          },
+        )
+      })
     },
   }
 
@@ -552,6 +588,8 @@ function createOpfsFixture(moveFailure?: Error) {
   return {
     directory,
     lockManager,
+    lockRequests,
+    secondLockRequested,
     staged,
     visible,
     events,
@@ -691,9 +729,85 @@ describe('createBrowserDeepZoomZipArtifactHost', () => {
     expect(filesystem.staged.size).toBe(0)
   })
 
+  test('cancels a queued publisher before it acquires the OPFS lease', async () => {
+    const filesystem = createOpfsFixture()
+    const first = await createBrowserDeepZoomZipArtifactHost({
+      directory: filesystem.directory,
+      lockManager: filesystem.lockManager,
+      requireStagedFile: true,
+    })
+    const controller = new AbortController()
+    const second = await createBrowserDeepZoomZipArtifactHost({
+      directory: filesystem.directory,
+      lockManager: filesystem.lockManager,
+      requireStagedFile: true,
+      signal: controller.signal,
+    })
+    let startedWriting!: () => void
+    const writing = new Promise<void>((resolve) => {
+      startedWriting = resolve
+    })
+    let releaseTiles!: () => void
+    const tileGate = new Promise<void>((resolve) => {
+      releaseTiles = resolve
+    })
+    async function* heldTiles(): AsyncGenerator<DeepZoomZipTile> {
+      startedWriting()
+      await tileGate
+      for (const tile of pyramid) yield tile
+    }
+    const firstPublish = persistDeepZoomZip(
+      { name: 'first', ...descriptorOptions },
+      heldTiles(),
+      first,
+    )
+    await writing
+    const waiting = persistDeepZoomZip(
+      { name: 'second', ...descriptorOptions, signal: controller.signal },
+      pyramid,
+      second,
+    )
+    try {
+      await filesystem.secondLockRequested
+      expect(filesystem.lockRequests[1]?.signal).toBe(controller.signal)
+      controller.abort()
+      await expect(waiting).rejects.toMatchObject({ name: 'AbortError' })
+      expect(filesystem.staged.size).toBe(1)
+      expect(filesystem.visible.size).toBe(0)
+    } finally {
+      controller.abort()
+      releaseTiles()
+      await firstPublish
+      await waiting.catch(() => undefined)
+    }
+    expect([...filesystem.visible.keys()]).toEqual(['first.zip'])
+    expect(filesystem.staged.size).toBe(0)
+    expect(await second.getPublished('second.zip')).toBeUndefined()
+  })
+
+  test('preserves a lock-less legacy part during recovery', async () => {
+    const filesystem = createOpfsFixture()
+    const legacy = 'dzi-00000000-0000-4000-8000-000000000000.part'
+    const locked = 'dzi-locked-11111111-1111-4111-8111-111111111111.part'
+    filesystem.addOrphan(legacy)
+    filesystem.addOrphan(locked)
+    const host = await createBrowserDeepZoomZipArtifactHost({
+      directory: filesystem.directory,
+      lockManager: filesystem.lockManager,
+      requireStagedFile: true,
+    })
+    expect(await host.recoverAbandonedStages()).toBe(1)
+    expect([...filesystem.staged.keys()]).toEqual([legacy])
+    const active = await host.stage()
+    expect(filesystem.staged.has(legacy)).toBe(true)
+    await active.discard()
+    expect([...filesystem.staged.keys()]).toEqual([legacy])
+    expect(filesystem.counts().publicRemovals).toBe(0)
+  })
+
   test('reclaims abandoned parts after reload and preserves unrelated files', async () => {
     const filesystem = createOpfsFixture()
-    const abandoned = 'dzi-00000000-0000-4000-8000-000000000000.part'
+    const abandoned = 'dzi-locked-00000000-0000-4000-8000-000000000000.part'
     filesystem.addOrphan(abandoned)
     filesystem.addOrphan('keep-me.txt')
     const host = await createBrowserDeepZoomZipArtifactHost({
