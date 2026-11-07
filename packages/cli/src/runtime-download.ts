@@ -154,6 +154,43 @@ export async function verifyArchiveDigest(
   )
 }
 
+/**
+ * A recovery release can rebuild a different archive for a version already on npm.
+ * Only replace its GitHub asset when the bytes still match the published npm pin.
+ */
+export async function verifyPublishedRuntimeRelease(
+  archiveFile: string,
+  publishedSourceFile: string,
+  releaseVersion: string,
+): Promise<void> {
+  const published = await readRuntimeSource(publishedSourceFile)
+  if (published.version !== releaseVersion) {
+    throw new CliError(
+      'runtime_digest_mismatch',
+      `The published CLI pins runtime ${published.version}, not ${releaseVersion}; refusing to replace its release asset.`,
+    )
+  }
+  const { size } = await stat(archiveFile)
+  if (size !== published.size) {
+    throw new CliError(
+      'runtime_digest_mismatch',
+      `The staged runtime is ${size} bytes, but the published CLI pins ${published.size} bytes; refusing to replace its release asset.`,
+    )
+  }
+  await verifyArchiveDigest(archiveFile, published.sha256)
+}
+
+/** Keep the release upload inside the pin check so mismatched recovery bytes cannot be published. */
+export async function uploadVerifiedRuntimeRelease(
+  archiveFile: string,
+  pinFile: string,
+  releaseVersion: string,
+  upload: () => Promise<void>,
+): Promise<void> {
+  await verifyPublishedRuntimeRelease(archiveFile, pinFile, releaseVersion)
+  await upload()
+}
+
 async function installOverride(
   paths: PascalPaths,
   override: string,
