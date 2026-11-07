@@ -1,12 +1,18 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { type SitePresentation, sceneRegistry } from '@pascal-app/core'
+import { SiteNode, type SitePresentation, sceneRegistry, useScene } from '@pascal-app/core'
+import {
+  DaylightAtmosphere,
+  type SceneAtmosphereSource,
+  isDaylightAtmosphere,
+  useSceneAtmosphere,
+} from '@pascal-app/viewer'
 import { act, create } from '@react-three/test-renderer'
 import { BoxGeometry, Color, type DirectionalLight, Mesh, Vector3 } from 'three'
 import { vec3 } from 'three/tsl'
 import { setKeyLightDirectionOverride } from '../../lib/key-light-override'
 import useViewer from '../../store/use-viewer'
 import { Lights } from './lights'
-import { SceneAtmosphere, type SceneAtmosphereSource } from './scene-atmosphere'
+import { SceneAtmosphere } from './scene-atmosphere'
 
 const authored: SitePresentation = {
   shadows: true,
@@ -103,6 +109,91 @@ test('a capture can temporarily aim an authored light without losing its saved p
     expect(light.position.toArray()).toEqual([-18, 35, 20])
   } finally {
     await renderer.unmount()
+  }
+})
+
+test('mounted site north rotation moves the daylight key and sky', async () => {
+  const previousScene = useScene.getState()
+  const site = SiteNode.parse({
+    id: 'site_sun_reactivity',
+    northRotation: 0,
+    dossier: {
+      provider: 'fixture',
+      asOf: '2026-01-01',
+      point: { lat: 45, lng: 0 },
+      sections: {},
+    },
+  })
+  useScene.setState({
+    nodes: { [site.id]: site },
+    rootNodeIds: [site.id],
+  } as never)
+  useViewer.setState({
+    timeOfDayMinutes: 720,
+    skyLive: false,
+    weather: 'clear',
+    deviceLocation: null,
+    transparentBackground: false,
+    renderQuality: 'low',
+  })
+
+  const observed: SceneAtmosphereSource[] = []
+  function AtmosphereProbe() {
+    const source = useSceneAtmosphere()
+    if (source) observed.push(source)
+    return null
+  }
+
+  let renderer: Awaited<ReturnType<typeof create>> | null = null
+  const luminance = (color: Color) => 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b
+  try {
+    renderer = await create(
+      <>
+        <DaylightAtmosphere />
+        <AtmosphereProbe />
+        <Lights />
+      </>,
+    )
+    await renderer.advanceFrames(2, 0.016)
+    const source = observed.at(-1)
+    if (!isDaylightAtmosphere(source)) throw new Error('daylight atmosphere did not mount')
+    const key = renderer.scene.findByType('DirectionalLight').instance as DirectionalLight
+    const originalDirection = source.sunDirection.clone()
+    const originalElevation = source.elevation
+    const keyDirection = () => key.position.clone().sub(key.target.position).normalize()
+    const originalKeyY = keyDirection().y
+    const skyTowardSun = luminance(source.sampleSkyRadiance(originalDirection))
+    const opposite = new Vector3(-originalDirection.x, originalDirection.y, -originalDirection.z)
+    expect(skyTowardSun).toBeGreaterThan(luminance(source.sampleSkyRadiance(opposite)))
+
+    await act(async () => {
+      useScene.setState({
+        nodes: {
+          [site.id]: SiteNode.parse({ ...site, northRotation: Math.PI / 2 }),
+        },
+      } as never)
+    })
+    await renderer.advanceFrames(2, 0.016)
+
+    const turned = source.sunDirection
+    expect(source.elevation).toBeCloseTo(originalElevation, 10)
+    expect(turned.x).toBeCloseTo(-originalDirection.z, 10)
+    expect(turned.z).toBeCloseTo(originalDirection.x, 10)
+    expect(turned.y).toBeCloseTo(originalDirection.y, 10)
+    const currentKey = keyDirection()
+    expect(currentKey.x).toBeCloseTo(turned.x, 8)
+    expect(currentKey.z).toBeCloseTo(turned.z, 8)
+    expect(currentKey.y).toBeCloseTo(originalKeyY, 8)
+    expect(luminance(source.sampleSkyRadiance(turned))).toBeCloseTo(skyTowardSun, 8)
+    expect(luminance(source.sampleSkyRadiance(turned))).toBeGreaterThan(
+      luminance(source.sampleSkyRadiance(originalDirection)),
+    )
+  } finally {
+    await renderer?.unmount()
+    useScene.setState({
+      nodes: previousScene.nodes,
+      rootNodeIds: previousScene.rootNodeIds,
+    } as never)
   }
 })
 

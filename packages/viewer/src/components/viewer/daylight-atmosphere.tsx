@@ -125,6 +125,7 @@ export function DaylightAtmosphere() {
   const source = useMemo<DaylightAtmosphereSource>(
     () => ({
       skyRadiance: (dir) => sky.skyRadiance(dir),
+      sampleSkyRadiance: (dir) => sky.radianceCpu(dir),
       reflectionRadiance: (dir) => sky.skyRadiance(dir, { disc: false }).mul(ENV_INTENSITY),
       // Just above the horizon in the view's heading: what the ground fog and the backdrop meet at.
       fogRadiance: (dir) => sky.skyRadiance(vec3(dir.x, 0.004, dir.z), { disc: false }),
