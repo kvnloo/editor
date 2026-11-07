@@ -1,3 +1,7 @@
+import {
+  createI18n as createExportedI18n,
+  registerMessages as registerExportedMessages,
+} from '@pascal-app/core/i18n'
 import { afterEach, describe, expect, spyOn, test } from 'bun:test'
 import { renderToString } from 'react-dom/server'
 import {
@@ -113,6 +117,28 @@ describe('message registry', () => {
         { count: 21 },
       ),
     ).toBe('21 fallback items')
+  })
+
+  test('uses the catalog locale for plural rules in regional fallbacks', async () => {
+    await registerExportedMessages('pt', 'viewer', {
+      'test.inherited-plural': '{count, plural, one {# livro} other {# livros}}',
+    })
+    await registerExportedMessages('pt-PT', 'viewer', {
+      'test.exact-plural': '{count, plural, one {# edição} other {# edições}}',
+    })
+
+    const scope = createExportedI18n({ locale: 'pt-PT' })
+    const render = (id: string, count: number) =>
+      scope._({
+        id,
+        message: '{count, plural, one {# item} other {# items}}',
+        values: { count },
+      })
+
+    expect(render('viewer.test.inherited-plural', 0)).toBe('0 livro')
+    expect(render('viewer.test.inherited-plural', 2)).toBe('2 livros')
+    expect(render('viewer.test.exact-plural', 0)).toBe('0 edições')
+    scope.destroy()
   })
 
   test('notifies subscribers for locale and active-catalog changes', async () => {
