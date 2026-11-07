@@ -1,5 +1,5 @@
 import type { McpServer } from '@modelcontextprotocol/server'
-import type { ProjectFileReader } from '@pascal-app/core/agent-operations'
+import type { GigapixelExportHost, ProjectFileReader } from '@pascal-app/core/agent-operations'
 import type { SceneOperations } from '../operations'
 import { registerAddColumn } from './add-column'
 import {
@@ -15,6 +15,7 @@ import { registerAuthorScene } from './author-scene'
 import { registerCheckCollisions } from './check-collisions'
 import { registerClearScene } from './clear-scene'
 import { registerConstructionTools } from './construction-tools'
+import { registerExportGigapixel } from './export-gigapixel'
 import { registerExportGlb } from './export-glb'
 import { registerExportJson } from './export-json'
 import { registerGetScene } from './get-scene'
@@ -47,12 +48,13 @@ export type ToolHosts = PlanReadingHosts & {
   /** Reads author_scene's payloadFile; without it the tool refuses one `files_unavailable`. */
   readFile?: ProjectFileReader
   sceneViews?: SceneViewHost
+  gigapixelExports?: GigapixelExportHost
 }
 
 export function registerTools(
   server: McpServer,
   operations: SceneOperations,
-  { catalog, geometryScripts, objectMakers, readFile, sceneViews, assetViews }: ToolHosts = {},
+  { catalog, geometryScripts, objectMakers, readFile, sceneViews, assetViews, gigapixelExports }: ToolHosts = {},
 ): void {
   registerGetScene(server, operations)
   registerSharedTools(server, operations, catalog, {
@@ -74,6 +76,7 @@ export function registerTools(
   registerRedo(server, operations)
   registerExportJson(server, operations)
   registerExportGlb(server, operations)
+  registerExportGigapixel(server, gigapixelExports)
   registerCheckCollisions(server, operations)
   registerTemplateTools(server, operations)
   if (operations.hasStore) {

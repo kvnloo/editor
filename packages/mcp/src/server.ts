@@ -6,6 +6,7 @@ import {
   type ServerContext,
 } from '@modelcontextprotocol/server'
 import {
+  type GigapixelExportHost,
   type HostedServiceExecutor,
   type ProjectFileReader,
   type ProjectFileToolExecutor,
@@ -68,6 +69,8 @@ export type CreatePascalMcpServerOptions = {
   readFile?: ProjectFileReader
   /** Asks an editor open on the project for a picture (`view_scene`); without it, refused. */
   sceneViews?: SceneViewHost
+  /** Trusted editor export host. No grant or renderer means a structured refusal. */
+  gigapixelExports?: GigapixelExportHost
   /** Reads catalog items' pictures and surfaces before view_assets and paint. */
   assetViews?: PlanReadingHosts['assetViews']
   /** Lines the host adds to what a client reads at connect (the person's own settings). */
@@ -94,6 +97,7 @@ export function createPascalMcpServer(opts: CreatePascalMcpServerOptions): McpSe
     objectMakers: opts.objectMakers,
     readFile: opts.readFile,
     sceneViews: opts.sceneViews,
+    gigapixelExports: opts.gigapixelExports,
     assetViews: opts.assetViews,
   })
   registerVisionTools(server, operations)
