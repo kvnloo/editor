@@ -1,14 +1,20 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
+import { loadPlugin, nodeRegistry } from '@pascal-app/core'
 import {
+  type AnyNode,
+  BaseNode,
   BuildingNode,
   DoorNode,
   ItemNode,
   LevelNode,
+  nodeType,
+  objectId,
   SiteNode,
   WallNode,
   ZoneNode,
 } from '@pascal-app/core/schema'
-import { SceneBridge } from './scene-bridge'
+import { z } from 'zod'
+import { SceneBridge } from '@pascal-app/mcp'
 
 function tick() {
   return new Promise((r) => setTimeout(r, 5))
@@ -201,6 +207,106 @@ describe('SceneBridge', () => {
   })
 
   describe('applyPatch', () => {
+    test('creates built-in walls and validates the resulting scene', () => {
+      const level = bridge.findNodes({ type: 'level' })[0]!
+      const wall = WallNode.parse({ start: [0, 0], end: [2, 0] })
+
+      expect(
+        bridge.applyPatch([{ op: 'create', node: wall, parentId: level.id }]).createdIds,
+      ).toContain(wall.id)
+      expect(bridge.validateScene()).toEqual({ valid: true, errors: [], warnings: [] })
+    })
+
+    test('rejects unregistered kinds in patches and stored scenes', () => {
+      const level = bridge.findNodes({ type: 'level' })[0]!
+      const unregistered = {
+        ...WallNode.parse({ start: [0, 0], end: [2, 0] }),
+        type: 'fixture:unregistered',
+      } as unknown as AnyNode
+
+      expect(() =>
+        bridge.applyPatch([{ op: 'create', node: unregistered, parentId: level.id }]),
+      ).toThrow(/create node failed schema/)
+
+      bridge.setScene(
+        { ...bridge.getNodes(), [unregistered.id]: unregistered },
+        bridge.getRootNodeIds(),
+      )
+      const validation = bridge.validateScene()
+      expect(validation.valid).toBe(false)
+      expect(validation.errors.some((error) => error.nodeId === unregistered.id)).toBe(true)
+    })
+
+    test('accepts registered plugin nodes in create patches and validation', async () => {
+      const restoreRegistry = nodeRegistry._snapshot()
+      const PluginProbe = BaseNode.extend({
+        id: objectId('pluginprobe'),
+        type: nodeType('fixture:mcp-probe'),
+        value: z.number().default(1),
+      })
+
+      try {
+        await loadPlugin({
+          id: 'fixture:mcp-probe-pack',
+          apiVersion: 1,
+          nodes: [
+            {
+              kind: 'fixture:mcp-probe',
+              schemaVersion: 1,
+              schema: PluginProbe,
+              category: 'utility',
+              defaults: () => ({
+                object: 'node',
+                parentId: null,
+                visible: true,
+                metadata: {},
+                value: 1,
+              }),
+              capabilities: {},
+            } as any,
+          ],
+        })
+
+        const level = bridge.findNodes({ type: 'level' })[0]!
+        const probe = PluginProbe.parse({ value: 7 })
+
+        const result = bridge.applyPatch([{ op: 'create', node: probe as any, parentId: level.id }])
+
+        expect(result.createdIds).toContain(probe.id)
+        expect(bridge.getNode(probe.id as any)).toMatchObject({
+          type: 'fixture:mcp-probe',
+          value: 7,
+          parentId: level.id,
+        })
+        expect(bridge.validateScene()).toEqual({ valid: true, errors: [], warnings: [] })
+
+        const invalidProbe = {
+          ...probe,
+          id: 'pluginprobe_invalid',
+          value: 'not-a-number',
+        }
+        expect(() =>
+          bridge.applyPatch([{ op: 'create', node: invalidProbe as any, parentId: level.id }]),
+        ).toThrow(/value/)
+
+        const nodes = bridge.getNodes()
+        bridge.setScene(
+          {
+            ...nodes,
+            [probe.id]: { ...nodes[probe.id]!, value: 'not-a-number' } as any,
+          },
+          bridge.getRootNodeIds(),
+        )
+        const invalidScene = bridge.validateScene()
+        expect(invalidScene.valid).toBe(false)
+        expect(invalidScene.errors).toContainEqual(
+          expect.objectContaining({ nodeId: probe.id, path: 'value' }),
+        )
+      } finally {
+        restoreRegistry()
+      }
+    })
+
     test('applies mixed create/update/delete atomically', async () => {
       const level = bridge.findNodes({ type: 'level' })[0]!
       const wallA = WallNode.parse({ start: [0, 0], end: [2, 0] })
