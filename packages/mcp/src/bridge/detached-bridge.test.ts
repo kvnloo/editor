@@ -238,6 +238,166 @@ describe('SceneBridge over a detached scene', () => {
       await Promise.all([firstClient?.close(), secondClient?.close()])
     }
   })
+
+  for (const scenario of [
+    {
+      action: 'detach',
+      expectedIds: ['building_other', 'level_other'],
+      expectedAncestry: [] as string[],
+      retained: false,
+    },
+    {
+      action: 'reparent',
+      expectedIds: [
+        'building_b',
+        'level_g',
+        'building_other',
+        'level_other',
+        'ancestryprobe_child',
+      ],
+      expectedAncestry: ['ancestryprobe_child', 'level_g', 'building_other'],
+      retained: true,
+    },
+    {
+      action: 'delete',
+      expectedIds: ['building_other', 'level_other'],
+      expectedAncestry: [] as string[],
+      retained: false,
+    },
+  ] as const) {
+    test('nested plugin validation follows the parent subtree on ' + scenario.action, async () => {
+      const restoreRegistry = nodeRegistry._snapshot()
+      const pluginId = 'fixture:ancestry'
+      const kind = 'fixture:ancestry-probe'
+      const AncestryProbe = BaseNode.extend({
+        id: objectId('ancestryprobe'),
+        type: nodeType(kind),
+        value: z.number().default(1),
+      })
+      let beforeScene: ReturnType<typeof detached> | undefined
+      let afterScene: ReturnType<typeof detached> | undefined
+      let afterClient: Client | undefined
+
+      try {
+        await loadPlugin({
+          id: pluginId,
+          apiVersion: 1,
+          nodes: [
+            {
+              kind,
+              schemaVersion: 1,
+              schema: AncestryProbe,
+              category: 'utility',
+              defaults: () => ({
+                object: 'node',
+                parentId: null,
+                visible: true,
+                metadata: {},
+                value: 1,
+              }),
+              capabilities: {},
+            } as unknown as AnyNodeDefinition,
+          ],
+        })
+
+        const base = snapshot()
+        const building = base.nodes['building_b' as AnyNodeId] as BuildingNode
+        const level = base.nodes['level_g' as AnyNodeId] as LevelNode
+        const probe = AncestryProbe.parse({
+          id: 'ancestryprobe_child',
+          parentId: level.id,
+          value: 7,
+        })
+        const otherLevel = LevelNode.parse({
+          id: 'level_other',
+          parentId: 'building_other',
+          level: 0,
+          height: 2.8,
+        })
+        const otherBuilding = BuildingNode.parse({
+          id: 'building_other',
+          children: [otherLevel.id],
+        })
+        beforeScene = detached('ancestry_before_' + scenario.action, {
+          ...base,
+          nodes: {
+            ...base.nodes,
+            [level.id]: { ...level, children: [probe.id] },
+            [probe.id]: probe as unknown as AnyNode,
+            [otherBuilding.id]: otherBuilding,
+            [otherLevel.id]: otherLevel,
+          },
+          rootNodeIds: [building.id, otherBuilding.id],
+          installedPlugins: [pluginId],
+          hasExplicitPluginInstallState: true,
+        } as SceneSnapshot)
+        const beforeBridge = new SceneBridge({ runtime: beforeScene })
+        const before = beforeBridge.exportJSON()
+        expect(Object.keys(before.nodes)).toHaveLength(5)
+        expect(before.installedPlugins).toEqual([pluginId])
+        expect(isNodeKindEnabled(kind, before.installedPlugins)).toBe(true)
+        expect(beforeBridge.getAncestry(probe.id as AnyNodeId).map((node) => node.id)).toEqual([
+          probe.id,
+          level.id,
+          building.id,
+        ])
+        expect(beforeBridge.validateScene()).toEqual({ valid: true, errors: [], warnings: [] })
+
+        if (scenario.action === 'detach') {
+          // Saved document no longer roots the first building: its entire subtree is pruned.
+          beforeBridge.loadJSON({ ...before, rootNodeIds: [otherBuilding.id] })
+        } else if (scenario.action === 'reparent') {
+          // Move the parent, not the plugin leaf, and keep the same project install list.
+          beforeBridge.updateNode(level.id, { parentId: otherBuilding.id })
+        } else {
+          expect(beforeBridge.deleteNode(building.id, true)).toEqual(
+            expect.arrayContaining([building.id, level.id, probe.id]),
+          )
+        }
+
+        const persisted = beforeBridge.exportJSON()
+        beforeScene.dispose()
+        beforeScene = undefined
+        // Simulate a later session that loads the saved scene but not its plugin code.
+        nodeRegistry._reset()
+        afterScene = detached('ancestry_after_' + scenario.action, {
+          ...persisted,
+          hasExplicitPluginInstallState: true,
+        } as SceneSnapshot)
+        const afterBridge = new SceneBridge({ runtime: afterScene })
+        afterClient = await connect(createPascalMcpServer({ bridge: afterBridge }))
+        const wire = await afterClient.callTool({ name: 'get_scene', arguments: {} })
+        const listed = wire.structuredContent as {
+          nodes: Record<string, unknown>
+          installedPlugins?: string[]
+        }
+        const after = afterBridge.exportJSON()
+        const validation = afterBridge.validateScene()
+
+        expect(wire.isError).toBeFalsy()
+        expect(Object.keys(after.nodes).sort()).toEqual([...scenario.expectedIds].sort())
+        expect(Object.keys(listed.nodes).sort()).toEqual([...scenario.expectedIds].sort())
+        expect(afterBridge.getAncestry(probe.id as AnyNodeId).map((node) => node.id)).toEqual(
+          scenario.expectedAncestry,
+        )
+        expect(after.installedPlugins).toEqual([pluginId])
+        expect(listed.installedPlugins).toEqual([pluginId])
+        expect(nodeRegistry.has(kind)).toBe(false)
+        expect(after.nodes[probe.id] !== undefined).toBe(scenario.retained)
+        expect(listed.nodes[probe.id] !== undefined).toBe(scenario.retained)
+        expect(validation.valid).toBe(!scenario.retained)
+        expect(validation.errors.some((error) => error.nodeId === probe.id)).toBe(
+          scenario.retained,
+        )
+      } finally {
+        await afterClient?.close()
+        beforeScene?.dispose()
+        afterScene?.dispose()
+        restoreRegistry()
+      }
+    })
+  }
+
 })
 
 describe('every MCP tool on a detached scene', () => {
