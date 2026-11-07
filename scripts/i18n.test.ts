@@ -161,6 +161,19 @@ test('rich-text validation preserves attributed and self-closing tags', () => {
   )
 })
 
+test('rich-text validation rejects HTML-like tag syntax in translations', () => {
+  for (const tag of [
+    '<img/src=x onerror=alert(1)>',
+    '<svg/onload=alert(1)>',
+    '<!-- note -->',
+  ]) {
+    expect(validateTranslation('Save', `Enregistrer ${tag}`, 'fr')).toContain(
+      'rich-text tags differ from English',
+    )
+  }
+  expect(validateTranslation('2 < 3 > 1', '2 < 4 > 1', 'fr')).toEqual([])
+})
+
 test('source drift fails checking, then extraction updates English and flags translations', () => {
   const root = catalogProject()
   const sample = join(root, 'packages/editor/src/sample.tsx')

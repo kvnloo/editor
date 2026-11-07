@@ -206,7 +206,7 @@ function tags(message: string): string[] {
     }
     if (end >= message.length) continue
     const token = message.slice(start, end + 1)
-    if (/^<\s*\/?\s*[A-Za-z][\w-]*(?:\s|\/?>)/.test(token)) found.push(token)
+    if (/^<\s*[A-Za-z!/]/.test(token)) found.push(token)
   }
   return found.sort()
 }
