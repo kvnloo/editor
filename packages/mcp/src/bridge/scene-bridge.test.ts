@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
 import { loadPlugin, nodeRegistry } from '@pascal-app/core'
 import {
+  type AnyNode,
   BaseNode,
   BuildingNode,
   DoorNode,
@@ -13,7 +14,7 @@ import {
   ZoneNode,
 } from '@pascal-app/core/schema'
 import { z } from 'zod'
-import { SceneBridge } from './scene-bridge'
+import { SceneBridge } from '@pascal-app/mcp'
 
 function tick() {
   return new Promise((r) => setTimeout(r, 5))
@@ -206,6 +207,36 @@ describe('SceneBridge', () => {
   })
 
   describe('applyPatch', () => {
+    test('creates built-in walls and validates the resulting scene', () => {
+      const level = bridge.findNodes({ type: 'level' })[0]!
+      const wall = WallNode.parse({ start: [0, 0], end: [2, 0] })
+
+      expect(
+        bridge.applyPatch([{ op: 'create', node: wall, parentId: level.id }]).createdIds,
+      ).toContain(wall.id)
+      expect(bridge.validateScene()).toEqual({ valid: true, errors: [], warnings: [] })
+    })
+
+    test('rejects unregistered kinds in patches and stored scenes', () => {
+      const level = bridge.findNodes({ type: 'level' })[0]!
+      const unregistered = {
+        ...WallNode.parse({ start: [0, 0], end: [2, 0] }),
+        type: 'fixture:unregistered',
+      } as unknown as AnyNode
+
+      expect(() =>
+        bridge.applyPatch([{ op: 'create', node: unregistered, parentId: level.id }]),
+      ).toThrow(/create node failed schema/)
+
+      bridge.setScene(
+        { ...bridge.getNodes(), [unregistered.id]: unregistered },
+        bridge.getRootNodeIds(),
+      )
+      const validation = bridge.validateScene()
+      expect(validation.valid).toBe(false)
+      expect(validation.errors.some((error) => error.nodeId === unregistered.id)).toBe(true)
+    })
+
     test('accepts registered plugin nodes in create patches and validation', async () => {
       const restoreRegistry = nodeRegistry._snapshot()
       const PluginProbe = BaseNode.extend({
