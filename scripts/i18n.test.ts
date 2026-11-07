@@ -174,6 +174,61 @@ test('rich-text validation rejects HTML-like tag syntax in translations', () => 
   expect(validateTranslation('2 < 3 > 1', '2 < 4 > 1', 'fr')).toEqual([])
 })
 
+test('ICU select validation preserves branches and their nesting', () => {
+  const english = '{state, select, draft {Draft} live {Live} other {Unknown}}'
+  expect(
+    validateTranslation(
+      english,
+      '{state, select, live {En ligne} draft {Brouillon} other {Inconnu}}',
+      'fr',
+    ),
+  ).toEqual([])
+  expect(
+    validateTranslation(english, '{state, select, draft {Brouillon} other {Inconnu}}', 'fr'),
+  ).toContain('select branches or nesting differ from English')
+  expect(
+    validateTranslation(
+      english,
+      '{state, select, draft {Brouillon} live {En ligne}}',
+      'fr',
+    ),
+  ).not.toEqual([])
+
+  const nested =
+    '{count, plural, one {{state, select, draft {Draft} other {Other}}} other {Many}}'
+  expect(
+    validateTranslation(
+      nested,
+      '{count, plural, one {Un} other {{state, select, draft {Brouillon} other {Autre}}}}',
+      'en',
+    ),
+  ).toContain('select branches or nesting differ from English')
+  expect(
+    validateTranslation(
+      '{count, plural, one {One} other {Other}}',
+      '{count, plural, one {Un}}',
+      'en',
+    ),
+  ).not.toEqual([])
+})
+
+test('rich-text validation rejects crossed or unbalanced nesting', () => {
+  const source = '<b><i>Important</i></b>'
+  expect(validateTranslation(source, '<b><i>Important</b></i>', 'fr')).toContain(
+    'rich-text tag nesting differs from English',
+  )
+  expect(validateTranslation(source, '<b><i>Important</i>', 'fr')).toContain(
+    'rich-text tag nesting differs from English',
+  )
+  expect(validateTranslation(source, '<i><b>Important</b></i>', 'fr')).toEqual([])
+  expect(
+    validateTranslation('<b>Save</b> <i>file</i>', '<i>Fichier</i> <b>Enregistrer</b>', 'fr'),
+  ).toEqual([])
+  expect(
+    validateTranslation('Tap <icon name="plus" />', 'Appuyer <icon name="plus" />', 'fr'),
+  ).toEqual([])
+})
+
 test('source drift fails checking, then extraction updates English and flags translations', () => {
   const root = catalogProject()
   const sample = join(root, 'packages/editor/src/sample.tsx')

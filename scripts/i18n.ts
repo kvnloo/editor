@@ -208,7 +208,48 @@ function tags(message: string): string[] {
     const token = message.slice(start, end + 1)
     if (/^<\s*[A-Za-z!/]/.test(token)) found.push(token)
   }
-  return found.sort()
+  return found
+}
+
+function validTagNesting(message: string): boolean {
+  const open: string[] = []
+  for (const token of tags(message)) {
+    const match = /^<\s*(\/?)\s*([A-Za-z][\w:-]*)/.exec(token)
+    if (!match) continue
+    const name = match[2]
+    if (!name) continue
+    if (match[1]) {
+      if (open.pop() !== name) return false
+    } else if (
+      !/\/\s*>$/.test(token) &&
+      !/^(?:area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)$/i.test(name)
+    ) {
+      open.push(name)
+    }
+  }
+  return open.length === 0
+}
+
+function selectStructures(tokens: CompiledToken[]): string[] {
+  const structures: string[] = []
+  const visit = (entries: CompiledToken[], path: string[]) => {
+    for (const token of entries) {
+      if (typeof token === 'string') continue
+      const type = token[1]
+      const choices = token[2]
+      if (!(choices && typeof choices === 'object')) continue
+      if (type === 'select') {
+        structures.push(JSON.stringify([path, token[0], Object.keys(choices).sort()]))
+      }
+      for (const [branch, contents] of Object.entries(choices)) {
+        if (Array.isArray(contents)) {
+          visit(contents as CompiledToken[], [...path, JSON.stringify([token[0], type, branch])])
+        }
+      }
+    }
+  }
+  visit(tokens, [])
+  return structures.sort()
 }
 
 function plurals(tokens: CompiledToken[]): Map<string, { type: string; categories: Set<string> }> {
@@ -296,8 +337,17 @@ export function validateTranslation(
   ) {
     errors.push('placeholder names differ from English')
   }
-  if (JSON.stringify(tags(source)) !== JSON.stringify(tags(translation))) {
+  if (JSON.stringify(tags(source).sort()) !== JSON.stringify(tags(translation).sort())) {
     errors.push('rich-text tags differ from English')
+  }
+  if (validTagNesting(source) && !validTagNesting(translation)) {
+    errors.push('rich-text tag nesting differs from English')
+  }
+  if (
+    JSON.stringify(selectStructures(sourceTokens)) !==
+    JSON.stringify(selectStructures(translatedTokens))
+  ) {
+    errors.push('select branches or nesting differ from English')
   }
 
   const sourcePlurals = plurals(sourceTokens)
