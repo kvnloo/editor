@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { CliError } from './errors.js'
-import { downloadToFile } from './http-download.js'
+import { type DownloadNetwork, downloadToFile } from './http-download.js'
 import { readJsonFile } from './json-files.js'
 import type { PascalPaths } from './paths.js'
 import {
@@ -46,6 +46,11 @@ export interface EnsureWebRuntimeOptions {
   activate?: boolean
   environment?: NodeJS.ProcessEnv
   sourceFile?: string
+  /** Socket inactivity budget in ms; also bounds TCP connect unless overridden. Defaults to 60s. */
+  downloadTimeoutMs?: number
+  /** TCP connect budget in ms; defaults to downloadTimeoutMs (normally 60s). */
+  downloadConnectTimeoutMs?: number
+  downloadNetwork?: DownloadNetwork
   onProgress?: (event: RuntimeProvisionProgress) => void
 }
 
@@ -149,6 +154,43 @@ export async function verifyArchiveDigest(
   )
 }
 
+/**
+ * A recovery release can rebuild a different archive for a version already on npm.
+ * Only replace its GitHub asset when the bytes still match the published npm pin.
+ */
+export async function verifyPublishedRuntimeRelease(
+  archiveFile: string,
+  publishedSourceFile: string,
+  releaseVersion: string,
+): Promise<void> {
+  const published = await readRuntimeSource(publishedSourceFile)
+  if (published.version !== releaseVersion) {
+    throw new CliError(
+      'runtime_digest_mismatch',
+      `The published CLI pins runtime ${published.version}, not ${releaseVersion}; refusing to replace its release asset.`,
+    )
+  }
+  const { size } = await stat(archiveFile)
+  if (size !== published.size) {
+    throw new CliError(
+      'runtime_digest_mismatch',
+      `The staged runtime is ${size} bytes, but the published CLI pins ${published.size} bytes; refusing to replace its release asset.`,
+    )
+  }
+  await verifyArchiveDigest(archiveFile, published.sha256)
+}
+
+/** Keep the release upload inside the pin check so mismatched recovery bytes cannot be published. */
+export async function uploadVerifiedRuntimeRelease(
+  archiveFile: string,
+  pinFile: string,
+  releaseVersion: string,
+  upload: () => Promise<void>,
+): Promise<void> {
+  await verifyPublishedRuntimeRelease(archiveFile, pinFile, releaseVersion)
+  await upload()
+}
+
 async function installOverride(
   paths: PascalPaths,
   override: string,
@@ -213,6 +255,9 @@ async function download(
   try {
     await downloadToFile(source.url, archiveFile, {
       environment: options.environment ?? process.env,
+      timeoutMs: options.downloadTimeoutMs,
+      connectTimeoutMs: options.downloadConnectTimeoutMs,
+      network: options.downloadNetwork,
       onProgress: ({ received, total }) =>
         options.onProgress?.({
           step: 'runtime-downloading',

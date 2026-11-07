@@ -1,8 +1,12 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { copyFile, mkdir, mkdtemp, open, rm, stat, writeFile } from 'node:fs/promises'
+import { EventEmitter } from 'node:events'
+import { copyFile, mkdir, mkdtemp, open, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import type { ClientRequest, IncomingMessage } from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
-import { isProxyBypassed, resolveProxyUrl } from './http-download.js'
+import { Readable } from 'node:stream'
+import { type DownloadNetwork, isProxyBypassed, resolveProxyUrl } from './http-download.js'
+import { uploadVerifiedRuntimeRelease } from './index.js'
 import { resolvePascalPaths } from './paths.js'
 import { findInstalledRuntime, installBundledRuntime, readActiveRuntime } from './runtime.js'
 import {
@@ -11,6 +15,7 @@ import {
   type RuntimeSource,
   readRuntimeSource,
   verifyArchiveDigest,
+  verifyPublishedRuntimeRelease,
 } from './runtime-download.js'
 import { createRuntimeArchive } from './tar.js'
 
@@ -53,6 +58,36 @@ describe('archive digest verification', () => {
 })
 
 describe('published runtime source', () => {
+  test('release recovery rejects new archive bytes for an already-published CLI', async () => {
+    const fixture = await createFixture()
+    const repacked = await tamper(fixture.archiveFile, path.join(fixture.root, 'repacked.tar.gz'))
+
+    await verifyPublishedRuntimeRelease(fixture.archiveFile, fixture.sourceFile, '1.2.3')
+    await expect(
+      verifyPublishedRuntimeRelease(repacked, fixture.sourceFile, '1.2.3'),
+    ).rejects.toMatchObject({ code: 'runtime_digest_mismatch' })
+  })
+
+  test('does not upload a recovery asset before verifying its published pin', async () => {
+    const fixture = await createFixture()
+    const repacked = await tamper(
+      fixture.archiveFile,
+      path.join(fixture.root, 'repacked-upload.tar.gz'),
+    )
+    const uploaded: string[] = []
+    const upload = async () => {
+      uploaded.push('asset')
+    }
+
+    await expect(
+      uploadVerifiedRuntimeRelease(repacked, fixture.sourceFile, '1.2.3', upload),
+    ).rejects.toMatchObject({ code: 'runtime_digest_mismatch' })
+    expect(uploaded).toEqual([])
+
+    await uploadVerifiedRuntimeRelease(fixture.archiveFile, fixture.sourceFile, '1.2.3', upload)
+    expect(uploaded).toEqual(['asset'])
+  })
+
   test('reads the archive URL and digest committed with the CLI', async () => {
     const fixture = await createFixture()
 
@@ -207,21 +242,171 @@ describe('web runtime resolution order', () => {
     expect(await findInstalledRuntime(fixture.paths, '1.2.3')).not.toBeNull()
   })
 
-  test('names the archive, the digest and the offline escape hatch when the download fails', async () => {
+  test('reports a stalled direct TCP connection without opening a port', async () => {
     const fixture = await createFixture()
-
-    const failure = await ensureWebRuntime({
+    const network = fakeDownloadNetwork()
+    const pending = ensureWebRuntime({
       paths: fixture.paths,
       sourceFile: fixture.sourceFile,
       environment: {},
+      downloadTimeoutMs: 500,
+      downloadNetwork: network.dependencies,
     }).catch((error: unknown) => error)
 
+    const { protocol, request } = await network.requested
+    expect(protocol).toBe('https')
+    network.clock.advance(499)
+    expect(request.destroyed).toBe(false)
+    network.clock.advance(1)
+
+    const failure = await pending
     expect(failure).toMatchObject({ code: 'runtime_download_failed' })
     const message = (failure as Error).message
     expect(message).toContain(fixture.source.url)
     expect(message).toContain(fixture.source.sha256)
     expect(message).toContain('pascal editor --runtime')
     expect(message).toContain('HTTPS_PROXY')
+    expect(await findInstalledRuntime(fixture.paths, '1.2.3')).toBeNull()
+  })
+
+  test('bounds a stalled proxy TCP connection before CONNECT', async () => {
+    const fixture = await createFixture()
+    const network = fakeDownloadNetwork()
+    const pending = ensureWebRuntime({
+      paths: fixture.paths,
+      sourceFile: fixture.sourceFile,
+      environment: { HTTPS_PROXY: 'http://proxy.example.invalid:3128' },
+      downloadTimeoutMs: 500,
+      downloadNetwork: network.dependencies,
+    }).catch((error: unknown) => error)
+
+    const { protocol, request } = await network.requested
+    expect(protocol).toBe('http')
+    network.clock.advance(499)
+    expect(request.destroyed).toBe(false)
+    network.clock.advance(1)
+
+    const failure = await pending
+    expect(failure).toMatchObject({ code: 'runtime_download_failed' })
+    expect((failure as Error).message).toContain('proxy.example.invalid')
+    expect(await findInstalledRuntime(fixture.paths, '1.2.3')).toBeNull()
+  })
+
+  test('allows a near-deadline direct connect and a later valid archive response', async () => {
+    const fixture = await createFixture()
+    const archive = await readFile(fixture.archiveFile)
+    const network = fakeDownloadNetwork()
+    const pending = ensureWebRuntime({
+      paths: fixture.paths,
+      sourceFile: fixture.sourceFile,
+      environment: {},
+      downloadNetwork: network.dependencies,
+    })
+
+    const { protocol, request } = await network.requested
+    expect(protocol).toBe('https')
+    const socket = Object.assign(new EventEmitter(), { connecting: true })
+    request.attachSocket(socket)
+    network.clock.advance(59_999)
+    socket.connecting = false
+    socket.emit('connect')
+    network.clock.advance(2_000)
+    request.emit(
+      'response',
+      Object.assign(Readable.from([archive]), {
+        statusCode: 200,
+        headers: { 'content-length': String(archive.length) },
+      }) as unknown as IncomingMessage,
+    )
+
+    const result = await pending
+    expect(result).toMatchObject({ installed: true, runtime: { version: '1.2.3' } })
+    expect(request.destroyed).toBe(false)
+  })
+
+  test('rejects an otherwise valid direct connect after the 60-second cutoff', async () => {
+    const fixture = await createFixture()
+    const network = fakeDownloadNetwork()
+    const pending = ensureWebRuntime({
+      paths: fixture.paths,
+      sourceFile: fixture.sourceFile,
+      environment: {},
+      downloadNetwork: network.dependencies,
+    }).catch((error: unknown) => error)
+
+    const { protocol, request } = await network.requested
+    expect(protocol).toBe('https')
+    request.attachSocket(Object.assign(new EventEmitter(), { connecting: true }))
+    network.clock.advance(60_001)
+
+    expect(request.destroyed).toBe(true)
+    expect(await pending).toMatchObject({ code: 'runtime_download_failed' })
+    expect(await findInstalledRuntime(fixture.paths, '1.2.3')).toBeNull()
+  })
+
+  test('accepts a direct connection after 60 seconds with a longer TCP budget', async () => {
+    const fixture = await createFixture()
+    const archive = await readFile(fixture.archiveFile)
+    const network = fakeDownloadNetwork()
+    const pending = ensureWebRuntime({
+      paths: fixture.paths,
+      sourceFile: fixture.sourceFile,
+      environment: {},
+      downloadTimeoutMs: 5_000,
+      downloadConnectTimeoutMs: 120_000,
+      downloadNetwork: network.dependencies,
+    })
+
+    const { protocol, request } = await network.requested
+    expect(protocol).toBe('https')
+    expect(request.inactivityTimeoutMs).toBe(5_000)
+    const socket = Object.assign(new EventEmitter(), { connecting: true })
+    request.attachSocket(socket)
+    network.clock.advance(60_001)
+    expect(request.destroyed).toBe(false)
+    socket.connecting = false
+    socket.emit('connect')
+    network.clock.advance(4_999)
+    expect(request.destroyed).toBe(false)
+    request.emit(
+      'response',
+      Object.assign(Readable.from([archive]), {
+        statusCode: 200,
+        headers: { 'content-length': String(archive.length) },
+      }) as unknown as IncomingMessage,
+    )
+
+    const result = await pending
+    expect(result).toMatchObject({ installed: true, runtime: { version: '1.2.3' } })
+    expect(request.destroyed).toBe(false)
+  })
+
+  test('starts the shorter inactivity budget only after a late TCP connect', async () => {
+    const fixture = await createFixture()
+    const network = fakeDownloadNetwork()
+    const pending = ensureWebRuntime({
+      paths: fixture.paths,
+      sourceFile: fixture.sourceFile,
+      environment: {},
+      downloadTimeoutMs: 500,
+      downloadConnectTimeoutMs: 120_000,
+      downloadNetwork: network.dependencies,
+    }).catch((error: unknown) => error)
+
+    const { request } = await network.requested
+    expect(request.inactivityTimeoutMs).toBe(500)
+    const socket = Object.assign(new EventEmitter(), { connecting: true })
+    request.attachSocket(socket)
+    network.clock.advance(60_001)
+    expect(request.destroyed).toBe(false)
+    socket.connecting = false
+    socket.emit('connect')
+    network.clock.advance(499)
+    expect(request.destroyed).toBe(false)
+    network.clock.advance(1)
+
+    expect(request.destroyed).toBe(true)
+    expect(await pending).toMatchObject({ code: 'runtime_download_failed' })
     expect(await findInstalledRuntime(fixture.paths, '1.2.3')).toBeNull()
   })
 })
@@ -271,8 +456,8 @@ interface Fixture {
   source: RuntimeSource
 }
 
-/** An unroutable port keeps every download test offline; the connection is refused at once. */
-const UNREACHABLE_HOST = 'https://127.0.0.1:1'
+/** The downloader tests inject a transport; no DNS, port or wall clock is involved. */
+const ARCHIVE_HOST = 'https://downloads.example.invalid'
 
 async function createFixture(version = '1.2.3'): Promise<Fixture> {
   const root = await temporaryRoot()
@@ -281,7 +466,7 @@ async function createFixture(version = '1.2.3'): Promise<Fixture> {
   await createRuntimeArchive(sourceDirectory, archiveFile)
   const source: RuntimeSource = {
     version,
-    url: `${UNREACHABLE_HOST}/pascal-web-runtime-${version}.tar.gz`,
+    url: `${ARCHIVE_HOST}/pascal-web-runtime-${version}.tar.gz`,
     sha256: await fileSha256(archiveFile),
     size: (await stat(archiveFile)).size,
   }
@@ -335,5 +520,95 @@ async function exists(file: string): Promise<boolean> {
     return true
   } catch {
     return false
+  }
+}
+
+type PendingDial = { protocol: 'http' | 'https'; request: InMemoryRequest }
+
+class InMemoryRequest extends EventEmitter {
+  destroyed = false
+  inactivityTimeoutMs: number | null = null
+  private inactivityCallback: (() => void) | null = null
+  private cancelInactivity: (() => void) | null = null
+
+  constructor(private readonly clock: ManualClock) {
+    super()
+  }
+
+  setTimeout(timeoutMs: number, callback: () => void): this {
+    this.inactivityTimeoutMs = timeoutMs
+    this.inactivityCallback = callback
+    return this
+  }
+
+  attachSocket(socket: EventEmitter & { connecting: boolean }): void {
+    this.emit('socket', socket)
+    const startInactivity = () => {
+      if (this.inactivityCallback && this.inactivityTimeoutMs !== null) {
+        this.cancelInactivity = this.clock.schedule(this.inactivityCallback, this.inactivityTimeoutMs)
+      }
+    }
+    if (socket.connecting) socket.once('connect', startInactivity)
+    else startInactivity()
+  }
+
+  end(): this {
+    return this
+  }
+
+  destroy(error: Error): this {
+    this.cancelInactivity?.()
+    this.destroyed = true
+    this.emit('error', error)
+    return this
+  }
+}
+
+class ManualClock {
+  private now = 0
+  private deadlines = new Set<{ due: number; action: () => void }>()
+
+  schedule(action: () => void, delayMs: number): () => void {
+    const deadline = { due: this.now + delayMs, action }
+    this.deadlines.add(deadline)
+    return () => {
+      this.deadlines.delete(deadline)
+    }
+  }
+
+  advance(ms: number): void {
+    this.now += ms
+    for (const deadline of this.deadlines) {
+      if (deadline.due <= this.now) {
+        this.deadlines.delete(deadline)
+        deadline.action()
+      }
+    }
+  }
+}
+
+function fakeDownloadNetwork(): {
+  clock: ManualClock
+  requested: Promise<PendingDial>
+  dependencies: DownloadNetwork
+} {
+  const clock = new ManualClock()
+  let deliver!: (dial: PendingDial) => void
+  const requested = new Promise<PendingDial>((resolve) => {
+    deliver = resolve
+  })
+  const makeRequest = (protocol: PendingDial['protocol']): ClientRequest => {
+    const request = new InMemoryRequest(clock)
+    deliver({ protocol, request })
+    return request as unknown as ClientRequest
+  }
+  return {
+    clock,
+    requested,
+    dependencies: {
+      requestHttp: () => makeRequest('http'),
+      requestHttps: () => makeRequest('https'),
+      schedule: (action, delayMs) => clock.schedule(action, delayMs),
+    },
   }
 }
