@@ -252,6 +252,62 @@ test('rich-text validation checks numbered tag identity and nesting', () => {
   expect(validateTranslation('2 < 3 > 1', '2 < 4 > 1', 'fr')).toEqual([])
 })
 
+test('ICU branch payloads retain their own markup and placeholders', () => {
+  const source = '{state, select, draft {<b>Draft</b> {name}} other {Other {count}}}'
+  expect(
+    validateTranslation(
+      source,
+      '{state, select, other {Autre {count}} draft {{name} <b>Brouillon</b>}}',
+      'fr',
+    ),
+  ).toEqual([])
+  expect(
+    validateTranslation(
+      source,
+      '{state, select, draft {<b>Brouillon {name}} other {Autre {count}</b>}}',
+      'fr',
+    ),
+  ).toContain('rich-text tag nesting differs from English in ICU branches')
+  expect(
+    validateTranslation(
+      source,
+      '{state, select, draft {Brouillon {name}} other {<b>Autre</b> {count}}}',
+      'fr',
+    ),
+  ).toContain('rich-text tags differ from English in ICU branches')
+  expect(
+    validateTranslation(
+      source,
+      '{state, select, draft {<b>Brouillon</b> {count}} other {Autre {name}}}',
+      'fr',
+    ),
+  ).toContain('placeholder locations differ from English in ICU branches')
+
+  const reordered =
+    '{state, select, draft {<b>Draft</b> <i>Preview</i> {name}} other {Other}}'
+  expect(
+    validateTranslation(
+      reordered,
+      '{state, select, other {Autre} draft {<i>Aperçu</i> {name} <b>Brouillon</b>}}',
+      'fr',
+    ),
+  ).toEqual([])
+  expect(
+    validateTranslation(
+      '{count, plural, one {{state, select, draft {{name}} other {Other}}} other {Many}}',
+      '{count, plural, one {{state, select, draft {Brouillon} other {{name}}}} other {Plusieurs}}',
+      'en',
+    ),
+  ).toContain('placeholder locations differ from English in ICU branches')
+  expect(
+    validateTranslation(
+      '{count, plural, one {One} other {Other}}',
+      '{count, plural, other {その他}}',
+      'ja',
+    ),
+  ).toEqual([])
+})
+
 test('source drift fails checking, then extraction updates English and flags translations', () => {
   const root = catalogProject()
   const sample = join(root, 'packages/editor/src/sample.tsx')

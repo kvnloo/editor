@@ -252,6 +252,59 @@ function selectStructures(tokens: CompiledToken[]): string[] {
   return structures.sort()
 }
 
+type BranchPayload = {
+  placeholders: string[]
+  tagTokens: string[]
+  balanced: boolean
+}
+
+function branchPayloads(tokens: CompiledToken[]): Map<string, BranchPayload[]> {
+  const branches = new Map<string, BranchPayload[]>()
+  const visit = (entries: CompiledToken[], path: string[]) => {
+    for (const token of entries) {
+      if (typeof token === 'string') continue
+      const type = token[1]
+      const choices = token[2]
+      if (
+        (type !== 'select' && type !== 'plural' && type !== 'selectordinal') ||
+        !choices ||
+        typeof choices !== 'object'
+      ) {
+        continue
+      }
+      for (const [branch, value] of Object.entries(choices)) {
+        if (!Array.isArray(value)) continue
+        const branchTokens = value as CompiledToken[]
+        const branchPath = [...path, JSON.stringify([token[0], type, branch])]
+        const markup = branchTokens
+          .filter((part): part is string => typeof part === 'string')
+          .join('')
+        const placeholders = new Set<string>()
+        for (const part of branchTokens) {
+          if (
+            typeof part !== 'string' &&
+            part[1] !== 'select' &&
+            part[1] !== 'plural' &&
+            part[1] !== 'selectordinal'
+          ) {
+            placeholders.add(part[0])
+          }
+        }
+        const payload: BranchPayload = {
+          placeholders: [...placeholders].sort(),
+          tagTokens: tags(markup).sort(),
+          balanced: validTagNesting(markup),
+        }
+        const key = JSON.stringify(branchPath)
+        branches.set(key, [...(branches.get(key) ?? []), payload])
+        visit(branchTokens, branchPath)
+      }
+    }
+  }
+  visit(tokens, [])
+  return branches
+}
+
 function plurals(tokens: CompiledToken[]): Map<string, { type: string; categories: Set<string> }> {
   const found = new Map<string, { type: string; categories: Set<string> }>()
   const visit = (entries: CompiledToken[]) => {
@@ -349,6 +402,35 @@ export function validateTranslation(
   ) {
     errors.push('select branches or nesting differ from English')
   }
+
+  const sourceBranches = branchPayloads(sourceTokens)
+  const translatedBranches = branchPayloads(translatedTokens)
+  const payloadSignature = (payloads: BranchPayload[], field: 'placeholders' | 'tagTokens') =>
+    JSON.stringify(payloads.map((payload) => JSON.stringify(payload[field])).sort())
+  const branchErrors = new Set<string>()
+  for (const [path, sourcePayloads] of sourceBranches) {
+    const translatedPayloads = translatedBranches.get(path)
+    if (!translatedPayloads) continue
+    if (
+      payloadSignature(sourcePayloads, 'placeholders') !==
+      payloadSignature(translatedPayloads, 'placeholders')
+    ) {
+      branchErrors.add('placeholder locations differ from English in ICU branches')
+    }
+    if (
+      payloadSignature(sourcePayloads, 'tagTokens') !==
+      payloadSignature(translatedPayloads, 'tagTokens')
+    ) {
+      branchErrors.add('rich-text tags differ from English in ICU branches')
+    }
+    if (
+      sourcePayloads.every((payload) => payload.balanced) &&
+      translatedPayloads.some((payload) => !payload.balanced)
+    ) {
+      branchErrors.add('rich-text tag nesting differs from English in ICU branches')
+    }
+  }
+  errors.push(...branchErrors)
 
   const sourcePlurals = plurals(sourceTokens)
   const translatedPlurals = plurals(translatedTokens)
