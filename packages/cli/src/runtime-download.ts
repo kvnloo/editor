@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { CliError } from './errors.js'
-import { downloadToFile } from './http-download.js'
+import { type DownloadNetwork, downloadToFile } from './http-download.js'
 import { readJsonFile } from './json-files.js'
 import type { PascalPaths } from './paths.js'
 import {
@@ -46,6 +46,11 @@ export interface EnsureWebRuntimeOptions {
   activate?: boolean
   environment?: NodeJS.ProcessEnv
   sourceFile?: string
+  /** Socket inactivity budget in ms; also bounds TCP connect unless overridden. Defaults to 60s. */
+  downloadTimeoutMs?: number
+  /** TCP connect budget in ms; defaults to downloadTimeoutMs (normally 60s). */
+  downloadConnectTimeoutMs?: number
+  downloadNetwork?: DownloadNetwork
   onProgress?: (event: RuntimeProvisionProgress) => void
 }
 
@@ -213,6 +218,9 @@ async function download(
   try {
     await downloadToFile(source.url, archiveFile, {
       environment: options.environment ?? process.env,
+      timeoutMs: options.downloadTimeoutMs,
+      connectTimeoutMs: options.downloadConnectTimeoutMs,
+      network: options.downloadNetwork,
       onProgress: ({ received, total }) =>
         options.onProgress?.({
           step: 'runtime-downloading',

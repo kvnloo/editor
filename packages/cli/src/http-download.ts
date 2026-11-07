@@ -15,10 +15,29 @@ export interface DownloadProgress {
   total: number | null
 }
 
+export interface DownloadNetwork {
+  requestHttp: (options: http.RequestOptions) => http.ClientRequest
+  requestHttps: (options: http.RequestOptions) => http.ClientRequest
+  schedule: (action: () => void, delayMs: number) => () => void
+}
+
+const NODE_NETWORK: DownloadNetwork = {
+  requestHttp: (options) => http.request(options),
+  requestHttps: (options) => https.request(options),
+  schedule: (action, delayMs) => {
+    const timer = setTimeout(action, delayMs)
+    return () => clearTimeout(timer)
+  },
+}
+
 export interface DownloadOptions {
   environment?: NodeJS.ProcessEnv
   onProgress?: (progress: DownloadProgress) => void
+  /** Socket inactivity budget; also bounds TCP connect unless overridden below. */
   timeoutMs?: number
+  /** TCP connect-phase budget, independent of established-socket inactivity. */
+  connectTimeoutMs?: number
+  network?: DownloadNetwork
 }
 
 /**
@@ -33,9 +52,11 @@ export async function downloadToFile(
 ): Promise<number> {
   const environment = options.environment ?? process.env
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  const connectTimeoutMs = options.connectTimeoutMs ?? timeoutMs
+  const network = options.network ?? NODE_NETWORK
   let target = parseHttpsUrl(url)
   for (let redirect = 0; ; redirect += 1) {
-    const response = await requestOnce(target, environment, timeoutMs)
+    const response = await requestOnce(target, environment, connectTimeoutMs, timeoutMs, network)
     const status = response.statusCode ?? 0
     if (status >= 300 && status < 400 && response.headers.location) {
       response.resume()
@@ -93,16 +114,24 @@ function parseHttpsUrl(value: string): URL {
 async function requestOnce(
   target: URL,
   environment: NodeJS.ProcessEnv,
-  timeoutMs: number,
+  connectTimeoutMs: number,
+  inactivityTimeoutMs: number,
+  network: DownloadNetwork,
 ): Promise<http.IncomingMessage> {
   const proxy = resolveProxyUrl(target, environment)
   const agent = proxy
     ? new TunnelAgent(
-        await openProxyTunnel(parseProxyUrl(proxy), target, timeoutMs),
+        await openProxyTunnel(
+          parseProxyUrl(proxy),
+          target,
+          connectTimeoutMs,
+          inactivityTimeoutMs,
+          network,
+        ),
         target.hostname,
       )
     : undefined
-  const request = https.request({
+  const request = network.requestHttps({
     hostname: target.hostname,
     port: target.port || 443,
     path: `${target.pathname}${target.search}`,
@@ -114,15 +143,26 @@ async function requestOnce(
     },
     ...(agent ? { agent } : {}),
   })
-  request.setTimeout(timeoutMs, () =>
-    request.destroy(new Error(`no response from ${target.host} within ${timeoutMs}ms`)),
+  const clearConnectTimer = armConnectTimeout(
+    request,
+    `TCP connect to ${target.host} did not complete within ${connectTimeoutMs}ms`,
+    connectTimeoutMs,
+    network,
   )
+
+  request.setTimeout(inactivityTimeoutMs, () => {
+    request.destroy(new Error(`no response from ${target.host} within ${inactivityTimeoutMs}ms`))
+  })
   request.end()
   return new Promise<http.IncomingMessage>((resolve, reject) => {
-    request.once('response', resolve)
-    request.once('error', (error) =>
-      reject(new CliError('download_failed', `Unable to reach ${target.href}: ${error.message}`)),
-    )
+    request.once('response', (response) => {
+      clearConnectTimer()
+      resolve(response)
+    })
+    request.once('error', (error) => {
+      clearConnectTimer()
+      reject(new CliError('download_failed', `Unable to reach ${target.href}: ${error.message}`))
+    })
   })
 }
 
@@ -174,14 +214,35 @@ function parseProxyUrl(value: string): URL {
   return proxy
 }
 
-async function openProxyTunnel(proxy: URL, target: URL, timeoutMs: number): Promise<Socket> {
+function armConnectTimeout(
+  request: http.ClientRequest,
+  message: string,
+  timeoutMs: number,
+  network: DownloadNetwork,
+): () => void {
+  // Socket inactivity timeouts do not cover the TCP handshake.
+  const cancel = network.schedule(() => request.destroy(new Error(message)), timeoutMs)
+  request.once('socket', (socket) => {
+    if (socket.connecting) socket.once('connect', cancel)
+    else cancel()
+  })
+  return cancel
+}
+
+async function openProxyTunnel(
+  proxy: URL,
+  target: URL,
+  connectTimeoutMs: number,
+  inactivityTimeoutMs: number,
+  network: DownloadNetwork,
+): Promise<Socket> {
   const authority = `${target.hostname}:${target.port || 443}`
   const headers: Record<string, string> = { host: authority }
   if (proxy.username) {
     const credentials = `${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`
     headers['proxy-authorization'] = `Basic ${Buffer.from(credentials).toString('base64')}`
   }
-  const requestFn = proxy.protocol === 'https:' ? https.request : http.request
+  const requestFn = proxy.protocol === 'https:' ? network.requestHttps : network.requestHttp
   const request = requestFn({
     host: proxy.hostname,
     port: proxy.port || (proxy.protocol === 'https:' ? 443 : 80),
@@ -189,12 +250,21 @@ async function openProxyTunnel(proxy: URL, target: URL, timeoutMs: number): Prom
     path: authority,
     headers,
   })
-  request.setTimeout(timeoutMs, () =>
-    request.destroy(new Error(`proxy ${proxy.host} did not answer CONNECT within ${timeoutMs}ms`)),
+  request.setTimeout(inactivityTimeoutMs, () => {
+    request.destroy(
+      new Error(`proxy ${proxy.host} did not answer CONNECT within ${inactivityTimeoutMs}ms`),
+    )
+  })
+  const clearConnectTimer = armConnectTimeout(
+    request,
+    `proxy ${proxy.host} TCP connect did not complete within ${connectTimeoutMs}ms`,
+    connectTimeoutMs,
+    network,
   )
   request.end()
   return new Promise<Socket>((resolve, reject) => {
     request.once('connect', (response, socket) => {
+      clearConnectTimer()
       if (response.statusCode !== 200) {
         socket.destroy()
         reject(
@@ -207,11 +277,12 @@ async function openProxyTunnel(proxy: URL, target: URL, timeoutMs: number): Prom
       }
       resolve(socket)
     })
-    request.once('error', (error) =>
+    request.once('error', (error) => {
+      clearConnectTimer()
       reject(
         new CliError('download_failed', `Unable to reach proxy ${proxy.host}: ${error.message}`),
-      ),
-    )
+      )
+    })
   })
 }
 
