@@ -46,8 +46,10 @@ export interface EnsureWebRuntimeOptions {
   activate?: boolean
   environment?: NodeJS.ProcessEnv
   sourceFile?: string
-  /** Overrides the download socket timeout in ms; the downloader defaults to 60s. */
+  /** Socket inactivity budget in ms; also bounds TCP connect unless overridden. Defaults to 60s. */
   downloadTimeoutMs?: number
+  /** TCP connect budget in ms; defaults to downloadTimeoutMs (normally 60s). */
+  downloadConnectTimeoutMs?: number
   downloadNetwork?: DownloadNetwork
   onProgress?: (event: RuntimeProvisionProgress) => void
 }
@@ -217,6 +219,7 @@ async function download(
     await downloadToFile(source.url, archiveFile, {
       environment: options.environment ?? process.env,
       timeoutMs: options.downloadTimeoutMs,
+      connectTimeoutMs: options.downloadConnectTimeoutMs,
       network: options.downloadNetwork,
       onProgress: ({ received, total }) =>
         options.onProgress?.({

@@ -33,7 +33,10 @@ const NODE_NETWORK: DownloadNetwork = {
 export interface DownloadOptions {
   environment?: NodeJS.ProcessEnv
   onProgress?: (progress: DownloadProgress) => void
+  /** Socket inactivity budget; also bounds TCP connect unless overridden below. */
   timeoutMs?: number
+  /** TCP connect-phase budget, independent of established-socket inactivity. */
+  connectTimeoutMs?: number
   network?: DownloadNetwork
 }
 
@@ -49,10 +52,11 @@ export async function downloadToFile(
 ): Promise<number> {
   const environment = options.environment ?? process.env
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  const connectTimeoutMs = options.connectTimeoutMs ?? timeoutMs
   const network = options.network ?? NODE_NETWORK
   let target = parseHttpsUrl(url)
   for (let redirect = 0; ; redirect += 1) {
-    const response = await requestOnce(target, environment, timeoutMs, network)
+    const response = await requestOnce(target, environment, connectTimeoutMs, timeoutMs, network)
     const status = response.statusCode ?? 0
     if (status >= 300 && status < 400 && response.headers.location) {
       response.resume()
@@ -110,13 +114,20 @@ function parseHttpsUrl(value: string): URL {
 async function requestOnce(
   target: URL,
   environment: NodeJS.ProcessEnv,
-  timeoutMs: number,
+  connectTimeoutMs: number,
+  inactivityTimeoutMs: number,
   network: DownloadNetwork,
 ): Promise<http.IncomingMessage> {
   const proxy = resolveProxyUrl(target, environment)
   const agent = proxy
     ? new TunnelAgent(
-        await openProxyTunnel(parseProxyUrl(proxy), target, timeoutMs, network),
+        await openProxyTunnel(
+          parseProxyUrl(proxy),
+          target,
+          connectTimeoutMs,
+          inactivityTimeoutMs,
+          network,
+        ),
         target.hostname,
       )
     : undefined
@@ -134,14 +145,14 @@ async function requestOnce(
   })
   const clearConnectTimer = armConnectTimeout(
     request,
-    `no response from ${target.host} within ${timeoutMs}ms`,
-    timeoutMs,
+    `TCP connect to ${target.host} did not complete within ${connectTimeoutMs}ms`,
+    connectTimeoutMs,
     network,
   )
 
-  request.setTimeout(timeoutMs, () =>
-    request.destroy(new Error(`no response from ${target.host} within ${timeoutMs}ms`)),
-  )
+  request.setTimeout(inactivityTimeoutMs, () => {
+    request.destroy(new Error(`no response from ${target.host} within ${inactivityTimeoutMs}ms`))
+  })
   request.end()
   return new Promise<http.IncomingMessage>((resolve, reject) => {
     request.once('response', (response) => {
@@ -221,7 +232,8 @@ function armConnectTimeout(
 async function openProxyTunnel(
   proxy: URL,
   target: URL,
-  timeoutMs: number,
+  connectTimeoutMs: number,
+  inactivityTimeoutMs: number,
   network: DownloadNetwork,
 ): Promise<Socket> {
   const authority = `${target.hostname}:${target.port || 443}`
@@ -238,13 +250,15 @@ async function openProxyTunnel(
     path: authority,
     headers,
   })
-  request.setTimeout(timeoutMs, () =>
-    request.destroy(new Error(`proxy ${proxy.host} did not answer CONNECT within ${timeoutMs}ms`)),
-  )
+  request.setTimeout(inactivityTimeoutMs, () => {
+    request.destroy(
+      new Error(`proxy ${proxy.host} did not answer CONNECT within ${inactivityTimeoutMs}ms`),
+    )
+  })
   const clearConnectTimer = armConnectTimeout(
     request,
-    `proxy ${proxy.host} did not answer CONNECT within ${timeoutMs}ms`,
-    timeoutMs,
+    `proxy ${proxy.host} TCP connect did not complete within ${connectTimeoutMs}ms`,
+    connectTimeoutMs,
     network,
   )
   request.end()

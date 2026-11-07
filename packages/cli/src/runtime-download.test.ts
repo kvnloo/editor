@@ -274,7 +274,7 @@ describe('web runtime resolution order', () => {
     const { protocol, request } = await network.requested
     expect(protocol).toBe('https')
     const socket = Object.assign(new EventEmitter(), { connecting: true })
-    request.emit('socket', socket)
+    request.attachSocket(socket)
     network.clock.advance(59_999)
     socket.connecting = false
     socket.emit('connect')
@@ -304,8 +304,74 @@ describe('web runtime resolution order', () => {
 
     const { protocol, request } = await network.requested
     expect(protocol).toBe('https')
-    request.emit('socket', Object.assign(new EventEmitter(), { connecting: true }))
+    request.attachSocket(Object.assign(new EventEmitter(), { connecting: true }))
     network.clock.advance(60_001)
+
+    expect(request.destroyed).toBe(true)
+    expect(await pending).toMatchObject({ code: 'runtime_download_failed' })
+    expect(await findInstalledRuntime(fixture.paths, '1.2.3')).toBeNull()
+  })
+
+  test('accepts a direct connection after 60 seconds with a longer TCP budget', async () => {
+    const fixture = await createFixture()
+    const archive = await readFile(fixture.archiveFile)
+    const network = fakeDownloadNetwork()
+    const pending = ensureWebRuntime({
+      paths: fixture.paths,
+      sourceFile: fixture.sourceFile,
+      environment: {},
+      downloadTimeoutMs: 5_000,
+      downloadConnectTimeoutMs: 120_000,
+      downloadNetwork: network.dependencies,
+    })
+
+    const { protocol, request } = await network.requested
+    expect(protocol).toBe('https')
+    expect(request.inactivityTimeoutMs).toBe(5_000)
+    const socket = Object.assign(new EventEmitter(), { connecting: true })
+    request.attachSocket(socket)
+    network.clock.advance(60_001)
+    expect(request.destroyed).toBe(false)
+    socket.connecting = false
+    socket.emit('connect')
+    network.clock.advance(4_999)
+    expect(request.destroyed).toBe(false)
+    request.emit(
+      'response',
+      Object.assign(Readable.from([archive]), {
+        statusCode: 200,
+        headers: { 'content-length': String(archive.length) },
+      }) as unknown as IncomingMessage,
+    )
+
+    const result = await pending
+    expect(result).toMatchObject({ installed: true, runtime: { version: '1.2.3' } })
+    expect(request.destroyed).toBe(false)
+  })
+
+  test('starts the shorter inactivity budget only after a late TCP connect', async () => {
+    const fixture = await createFixture()
+    const network = fakeDownloadNetwork()
+    const pending = ensureWebRuntime({
+      paths: fixture.paths,
+      sourceFile: fixture.sourceFile,
+      environment: {},
+      downloadTimeoutMs: 500,
+      downloadConnectTimeoutMs: 120_000,
+      downloadNetwork: network.dependencies,
+    }).catch((error: unknown) => error)
+
+    const { request } = await network.requested
+    expect(request.inactivityTimeoutMs).toBe(500)
+    const socket = Object.assign(new EventEmitter(), { connecting: true })
+    request.attachSocket(socket)
+    network.clock.advance(60_001)
+    expect(request.destroyed).toBe(false)
+    socket.connecting = false
+    socket.emit('connect')
+    network.clock.advance(499)
+    expect(request.destroyed).toBe(false)
+    network.clock.advance(1)
 
     expect(request.destroyed).toBe(true)
     expect(await pending).toMatchObject({ code: 'runtime_download_failed' })
@@ -429,9 +495,29 @@ type PendingDial = { protocol: 'http' | 'https'; request: InMemoryRequest }
 
 class InMemoryRequest extends EventEmitter {
   destroyed = false
+  inactivityTimeoutMs: number | null = null
+  private inactivityCallback: (() => void) | null = null
+  private cancelInactivity: (() => void) | null = null
 
-  setTimeout(_timeoutMs: number, _callback: () => void): this {
+  constructor(private readonly clock: ManualClock) {
+    super()
+  }
+
+  setTimeout(timeoutMs: number, callback: () => void): this {
+    this.inactivityTimeoutMs = timeoutMs
+    this.inactivityCallback = callback
     return this
+  }
+
+  attachSocket(socket: EventEmitter & { connecting: boolean }): void {
+    this.emit('socket', socket)
+    const startInactivity = () => {
+      if (this.inactivityCallback && this.inactivityTimeoutMs !== null) {
+        this.cancelInactivity = this.clock.schedule(this.inactivityCallback, this.inactivityTimeoutMs)
+      }
+    }
+    if (socket.connecting) socket.once('connect', startInactivity)
+    else startInactivity()
   }
 
   end(): this {
@@ -439,6 +525,7 @@ class InMemoryRequest extends EventEmitter {
   }
 
   destroy(error: Error): this {
+    this.cancelInactivity?.()
     this.destroyed = true
     this.emit('error', error)
     return this
@@ -479,7 +566,7 @@ function fakeDownloadNetwork(): {
     deliver = resolve
   })
   const makeRequest = (protocol: PendingDial['protocol']): ClientRequest => {
-    const request = new InMemoryRequest()
+    const request = new InMemoryRequest(clock)
     deliver({ protocol, request })
     return request as unknown as ClientRequest
   }
