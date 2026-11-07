@@ -88,6 +88,15 @@ test('the caller controls the overlap independently of the picture', () => {
   }
 })
 
+test('one-pixel overlap preserves integral render tiles', () => {
+  expect(tileGrid(4, 2, 3, 1)).toEqual([
+    { col: 0, row: 0, x: 0, y: 0, w: 2, h: 2, inner: { x: 0, y: 0, w: 1, h: 2 } },
+    { col: 1, row: 0, x: 0, y: 0, w: 3, h: 2, inner: { x: 1, y: 0, w: 1, h: 2 } },
+    { col: 2, row: 0, x: 1, y: 0, w: 3, h: 2, inner: { x: 2, y: 0, w: 1, h: 2 } },
+    { col: 3, row: 0, x: 2, y: 0, w: 2, h: 2, inner: { x: 3, y: 0, w: 1, h: 2 } },
+  ])
+})
+
 for (const { input, args, reason } of [
   { input: 'zero width', args: [0, 8, 7, 3], reason: 'width' },
   { input: 'negative width', args: [-1, 8, 7, 3], reason: 'width' },
@@ -103,6 +112,7 @@ for (const { input, args, reason } of [
   { input: 'fractional pass edge', args: [8, 8, 7.5, 0], reason: 'passEdge' },
   { input: 'infinite pass edge', args: [8, 8, Infinity, 0], reason: 'passEdge' },
   { input: 'negative overlap', args: [8, 8, 7, -1], reason: 'overlap' },
+  { input: 'fractional overlap', args: [4, 4, 3, 0.5], reason: 'overlap' },
   { input: 'NaN overlap', args: [8, 8, 7, NaN], reason: 'overlap' },
   { input: 'infinite overlap', args: [8, 8, 7, Infinity], reason: 'overlap' },
   { input: 'zero interior', args: [8, 8, 8, 4], reason: 'overlap' },

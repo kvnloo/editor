@@ -27,8 +27,8 @@ export function tileGrid(width: number, height: number, passEdge: number, overla
       throw new RangeError(`${name} must be a positive safe integer`)
     }
   }
-  if (!Number.isFinite(overlap) || overlap < 0 || 2 * overlap >= passEdge) {
-    throw new RangeError('overlap must be finite and non-negative with 2 * overlap < passEdge')
+  if (!Number.isSafeInteger(overlap) || overlap < 0 || 2 * overlap >= passEdge) {
+    throw new RangeError('overlap must be a non-negative safe integer with 2 * overlap < passEdge')
   }
 
   const room = passEdge - 2 * overlap
