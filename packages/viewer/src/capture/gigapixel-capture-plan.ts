@@ -31,6 +31,8 @@ export interface GigapixelCapturePass {
 
 export interface GigapixelCapturePlan {
   passes: GigapixelCapturePass[]
+  /** Shared pyramid geometry and adjacency for budget replay and streaming. */
+  pyramid: GigapixelPyramidPlan
   /**
    * Conservative high-water RGBA pixel count: readback, all copied fragments
    * (including ready tiles), completed tiles, resident pyramid children, and
@@ -39,61 +41,99 @@ export interface GigapixelCapturePlan {
   peakResidentPixels: number
 }
 
-
-type PyramidParent = {
+export interface GigapixelPyramidParent {
   tile: DeepZoomTile
   children: string[]
-  remainingChildren: number
+}
+
+export interface GigapixelPyramidDependencyLevel {
+  parents: Map<string, GigapixelPyramidParent>
+  byChild: Map<string, string[]>
+}
+
+export interface GigapixelPyramidPlan {
+  sizes: [number, number][]
+  levels: DeepZoomTile[][]
+  dependencies: GigapixelPyramidDependencyLevel[]
 }
 
 const tileKey = (col: number, row: number): string => col + '_' + row
 
-/** Mirror the streamer's allocation/release order, including pyramid assembly. */
-function peakResidentPixelsForPlan(
-  passes: GigapixelCapturePass[],
+/**
+ * Index row-major child tiles by their regular DeepZoom grid coordinates.
+ * The candidate range is conservative; strict rectangle intersections still
+ * decide each edge, including clipped borders and overlap-only consumers.
+ */
+export function planGigapixelPyramid(
   width: number,
   height: number,
   tileSize: number,
   overlap: number,
-): number {
+): GigapixelPyramidPlan {
   const maxLevel = deepZoomMaxLevel(width, height)
   const sizes = Array.from({ length: maxLevel + 1 }, (_, level) =>
     deepZoomLevelSize(width, height, level),
   )
   const levels = sizes.map(([w, h]) => deepZoomTiles(w, h, tileSize, overlap))
-  const parentsByLevel: Map<string, PyramidParent>[] = []
-  const consumersByLevel: Map<string, string[]>[] = []
+  const dependencies: GigapixelPyramidDependencyLevel[] = []
 
   for (let level = 0; level < maxLevel; level++) {
     const [childWidth, childHeight] = sizes[level + 1]!
-    const parents = new Map<string, PyramidParent>()
+    const childrenAtLevel = levels[level + 1]!
+    const childCols = Math.ceil(childWidth / tileSize)
+    const childRows = Math.ceil(childHeight / tileSize)
+    const parents = new Map<string, GigapixelPyramidParent>()
     const byChild = new Map<string, string[]>()
+
     for (const parent of levels[level]!) {
       const sx = parent.x * 2
       const sy = parent.y * 2
       const sw = Math.min(childWidth - sx, parent.w * 2)
       const sh = Math.min(childHeight - sy, parent.h * 2)
-      const children = levels[level + 1]!
-        .filter(
-          (child) =>
+      const firstCol = Math.max(0, Math.floor((sx - overlap) / tileSize))
+      const lastCol = Math.min(childCols - 1, Math.ceil((sx + sw + overlap) / tileSize) - 1)
+      const firstRow = Math.max(0, Math.floor((sy - overlap) / tileSize))
+      const lastRow = Math.min(childRows - 1, Math.ceil((sy + sh + overlap) / tileSize) - 1)
+      const children: string[] = []
+
+      for (let row = firstRow; row <= lastRow; row++) {
+        for (let col = firstCol; col <= lastCol; col++) {
+          const child = childrenAtLevel[row * childCols + col]!
+          if (
             child.x < sx + sw &&
             child.y < sy + sh &&
             child.x + child.w > sx &&
-            child.y + child.h > sy,
-        )
-        .map((child) => tileKey(child.col, child.row))
+            child.y + child.h > sy
+          ) {
+            children.push(tileKey(child.col, child.row))
+          }
+        }
+      }
       if (children.length === 0) throw new Error('DeepZoom parent has no source tiles')
       const parentKey = tileKey(parent.col, parent.row)
-      parents.set(parentKey, { tile: parent, children, remainingChildren: children.length })
+      parents.set(parentKey, { tile: parent, children })
       for (const childKey of children) {
         const consumers = byChild.get(childKey) ?? []
         consumers.push(parentKey)
         byChild.set(childKey, consumers)
       }
     }
-    parentsByLevel.push(parents)
-    consumersByLevel.push(byChild)
+    dependencies.push({ parents, byChild })
   }
+
+  return { sizes, levels, dependencies }
+}
+
+/** Mirror the streamer's allocation/release order, including pyramid assembly. */
+function peakResidentPixelsForPlan(
+  passes: GigapixelCapturePass[],
+  pyramid: GigapixelPyramidPlan,
+): number {
+  const { sizes, levels, dependencies } = pyramid
+  const maxLevel = levels.length - 1
+  const remainingByLevel = dependencies.map(
+    ({ parents }) => new Map([...parents].map(([id, parent]) => [id, parent.children.length])),
+  )
 
   const resident = Array.from(
     { length: maxLevel + 1 },
@@ -120,15 +160,18 @@ function peakResidentPixelsForPlan(
       return
     }
     const id = tileKey(tile.col, tile.row)
-    const requiredBy = consumersByLevel[level - 1]!.get(id) ?? []
+    const requiredBy = dependencies[level - 1]!.byChild.get(id) ?? []
     if (requiredBy.length === 0) throw new Error('DeepZoom tile has no pyramid parent')
     resident[level]!.set(id, { pixels, remainingConsumers: requiredBy.length })
 
     for (const parentKey of requiredBy) {
-      const parent = parentsByLevel[level - 1]!.get(parentKey)
+      const parent = dependencies[level - 1]!.parents.get(parentKey)
       if (!parent) throw new Error('DeepZoom parent dependency is missing')
-      parent.remainingChildren -= 1
-      if (parent.remainingChildren !== 0) continue
+      const remaining = remainingByLevel[level - 1]!
+      const count = remaining.get(parentKey)
+      if (count === undefined) throw new Error('DeepZoom parent dependency is missing')
+      remaining.set(parentKey, count - 1)
+      if (count !== 1) continue
       const [childWidth, childHeight] = sizes[level]!
       const sx = parent.tile.x * 2
       const sy = parent.tile.y * 2
@@ -228,7 +271,8 @@ export function planGigapixelCapture({
     throw new RangeError('pixel counts must be safe integers')
   }
 
-  const dziTiles = deepZoomTiles(width, height, tileSize, overlap)
+  const pyramid = planGigapixelPyramid(width, height, tileSize, overlap)
+  const dziTiles = pyramid.levels.at(-1)!
   const renderPasses = tileGrid(width, height, passEdge, renderOverlap)
   const unreadPixels = dziTiles.map((tile) => tile.w * tile.h)
   const heldPixels = dziTiles.map(() => 0)
@@ -271,6 +315,7 @@ export function planGigapixelCapture({
 
   return {
     passes,
-    peakResidentPixels: peakResidentPixelsForPlan(passes, width, height, tileSize, overlap),
+    pyramid,
+    peakResidentPixels: peakResidentPixelsForPlan(passes, pyramid),
   }
 }

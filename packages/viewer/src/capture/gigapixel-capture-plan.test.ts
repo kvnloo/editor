@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test'
-import { deepZoomTiles, planGigapixelCapture } from '@pascal-app/viewer/capture'
+import {
+  deepZoomTiles,
+  planGigapixelCapture,
+  planGigapixelPyramid,
+} from '@pascal-app/viewer/capture'
 
 const large = {
   width: 32_768,
@@ -65,6 +69,36 @@ describe('gigapixel capture plan', () => {
       expect(readPixels.get(id)).toBe(tile.w * tile.h)
     }
     expect(plan.passes.at(-1)!.retainedPixelsAfter).toBe(0)
+  })
+
+  test('indexes strict child intersections across non-overlap and shared overlap edges', () => {
+    const separate = planGigapixelPyramid(8, 4, 2, 0)
+    const shared = planGigapixelPyramid(8, 4, 2, 1)
+    const separateTop = separate.dependencies[2]!
+    const sharedTop = shared.dependencies[2]!
+    expect([...separateTop.parents.keys()]).toEqual(['0_0', '1_0'])
+    expect(separateTop.parents.get('0_0')?.children).toEqual(['0_0', '1_0', '0_1', '1_1'])
+    expect(separateTop.parents.get('1_0')?.children).toEqual(['2_0', '3_0', '2_1', '3_1'])
+    expect(separateTop.byChild.get('1_0')).toEqual(['0_0'])
+    expect(separateTop.byChild.get('2_0')).toEqual(['1_0'])
+
+    const allChildren = ['0_0', '1_0', '2_0', '3_0', '0_1', '1_1', '2_1', '3_1']
+    expect([...sharedTop.parents.values()].map(({ children }) => children)).toEqual([
+      allChildren,
+      allChildren,
+    ])
+    expect(sharedTop.byChild.get('0_0')).toEqual(['0_0', '1_0'])
+    expect(sharedTop.byChild.get('3_1')).toEqual(['0_0', '1_0'])
+
+    const plan = planGigapixelCapture({
+      width: 8,
+      height: 4,
+      passEdge: 8,
+      tileSize: 2,
+      overlap: 1,
+      renderOverlap: 0,
+    })
+    expect(plan.pyramid.dependencies[2]!.parents.get('1_0')?.children).toEqual(allChildren)
   })
 
   test('bounds readbacks, copied fragments and pyramid buffers below five full passes', () => {

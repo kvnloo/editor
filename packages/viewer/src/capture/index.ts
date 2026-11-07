@@ -27,7 +27,11 @@ export {
   type GigapixelCaptureOptions,
   type GigapixelCapturePass,
   type GigapixelCapturePlan,
+  type GigapixelPyramidDependencyLevel,
+  type GigapixelPyramidParent,
+  type GigapixelPyramidPlan,
   planGigapixelCapture,
+  planGigapixelPyramid,
 } from './gigapixel-capture-plan'
 export { resolveCaptureFrameMatrix } from './frame'
 export { halveRgba } from './halve-rgba'

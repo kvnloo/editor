@@ -125,6 +125,52 @@ describe('streamGigapixelCapture', () => {
     expect(Object.keys(entries)).toHaveLength(7)
   })
 
+  test('shares overlapping parent inputs without changing pixels or resident peak', async () => {
+    const shared = {
+      name: 'shared',
+      width: 8,
+      height: 4,
+      passEdge: 8,
+      tileSize: 2,
+      overlap: 1,
+      renderOverlap: 0,
+    }
+    const plan = planGigapixelCapture(shared)
+    const sink = createInMemoryGigapixelArtifactSink()
+    const actual = await streamGigapixelCapture(
+      shared,
+      (pass) => {
+        const rgba = new Uint8ClampedArray(pass.w * pass.h * 4)
+        for (let y = 0; y < pass.h; y++) {
+          for (let x = 0; x < pass.w; x++) {
+            const at = (y * pass.w + x) * 4
+            rgba[at] = (pass.x + x) * 10
+            rgba[at + 1] = (pass.y + y) * 20
+            rgba[at + 3] = 255
+          }
+        }
+        return rgba
+      },
+      (rgba) => new Uint8Array(rgba),
+      sink,
+    )
+    const entries = unzipSync(new Uint8Array(await sink.blob().arrayBuffer()))
+    expect(actual.tilesWritten).toBe(12)
+    expect(Object.keys(entries)).toHaveLength(13)
+    expect(actual.peakResidentPixels).toBe(plan.peakResidentPixels)
+    expect(actual.planPeakResidentPixels).toBe(plan.peakResidentPixels)
+
+    const left = entries['shared_files/2/0_0.webp']!
+    const right = entries['shared_files/2/1_0.webp']!
+    expect(left).toHaveLength(3 * 2 * 4)
+    expect(right).toHaveLength(3 * 2 * 4)
+    // Both parents consume child pixels x=2..5; their overlapping outputs agree.
+    expect(Array.from(left.subarray(4, 8))).toEqual([25, 10, 0, 255])
+    expect(Array.from(right.subarray(0, 4))).toEqual([25, 10, 0, 255])
+    expect(Array.from(left.subarray(8, 12))).toEqual([45, 10, 0, 255])
+    expect(Array.from(right.subarray(4, 8))).toEqual([45, 10, 0, 255])
+  })
+
   test('rejects an incorrect render readback instead of writing a partial success', async () => {
     await expect(
       streamGigapixelCapture(

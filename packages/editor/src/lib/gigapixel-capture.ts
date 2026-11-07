@@ -1,13 +1,11 @@
 import {
-  deepZoomLevelSize,
-  deepZoomMaxLevel,
-  deepZoomTiles,
   halveRgba,
   planGigapixelCapture,
   type DeepZoomTile,
   type GigapixelCaptureFragment,
   type GigapixelCaptureOptions,
   type GigapixelCapturePass,
+  type GigapixelPyramidParent,
 } from '@pascal-app/viewer/capture'
 import { streamDeepZoomZip, type DeepZoomZipTile } from './deep-zoom-zip'
 import type { GigapixelArtifactReceipt, GigapixelArtifactSink } from './gigapixel-artifact-sink'
@@ -48,12 +46,6 @@ interface ResidentTile {
   tile: DeepZoomTile
   data: Uint8ClampedArray
   remainingConsumers: number
-}
-
-interface ParentState {
-  tile: DeepZoomTile
-  children: string[]
-  remainingChildren: number
 }
 
 const key = (col: number, row: number): string => col + '_' + row
@@ -99,47 +91,11 @@ async function captureToSink(
   }
   checkCancelled()
   const plan = planGigapixelCapture(options)
-  const { width, height, tileSize, overlap } = options
-  const maxLevel = deepZoomMaxLevel(width, height)
-  const sizes = Array.from({ length: maxLevel + 1 }, (_, level) =>
-    deepZoomLevelSize(width, height, level),
+  const { sizes, levels, dependencies } = plan.pyramid
+  const maxLevel = levels.length - 1
+  const remainingByLevel = dependencies.map(
+    ({ parents }) => new Map([...parents].map(([id, parent]) => [id, parent.children.length])),
   )
-  const levels = sizes.map(([w, h]) => deepZoomTiles(w, h, tileSize, overlap))
-  const dependencies: Array<{
-    parents: Map<string, ParentState>
-    byChild: Map<string, string[]>
-  }> = []
-
-  for (let level = 0; level < maxLevel; level++) {
-    const [childWidth, childHeight] = sizes[level + 1]!
-    const parents = new Map<string, ParentState>()
-    const byChild = new Map<string, string[]>()
-
-    for (const parent of levels[level]!) {
-      const sx = parent.x * 2
-      const sy = parent.y * 2
-      const sw = Math.min(childWidth - sx, parent.w * 2)
-      const sh = Math.min(childHeight - sy, parent.h * 2)
-      const children = levels[level + 1]!
-        .filter(
-          (child) =>
-            child.x < sx + sw &&
-            child.y < sy + sh &&
-            child.x + child.w > sx &&
-            child.y + child.h > sy,
-        )
-        .map((child) => key(child.col, child.row))
-      if (children.length === 0) throw new Error('DeepZoom parent has no source tiles')
-      const parentKey = key(parent.col, parent.row)
-      parents.set(parentKey, { tile: parent, children, remainingChildren: children.length })
-      for (const childKey of children) {
-        const consumers = byChild.get(childKey) ?? []
-        consumers.push(parentKey)
-        byChild.set(childKey, consumers)
-      }
-    }
-    dependencies.push({ parents, byChild })
-  }
 
   const resident = Array.from(
     { length: maxLevel + 1 },
@@ -158,7 +114,7 @@ async function captureToSink(
   }
   let tilesWritten = 0
 
-  function assembleParent(level: number, parent: ParentState): Uint8ClampedArray {
+  function assembleParent(level: number, parent: GigapixelPyramidParent): Uint8ClampedArray {
     const [childWidth, childHeight] = sizes[level + 1]!
     const sx = parent.tile.x * 2
     const sy = parent.tile.y * 2
@@ -226,8 +182,11 @@ async function captureToSink(
     for (const parentKey of requiredBy) {
       const parent = dependencies[level - 1]!.parents.get(parentKey)
       if (!parent) throw new Error('DeepZoom parent dependency is missing')
-      parent.remainingChildren -= 1
-      if (parent.remainingChildren !== 0) continue
+      const remaining = remainingByLevel[level - 1]!
+      const count = remaining.get(parentKey)
+      if (count === undefined) throw new Error('DeepZoom parent dependency is missing')
+      remaining.set(parentKey, count - 1)
+      if (count !== 1) continue
       const parentPixels = assembleParent(level - 1, parent)
       for (const childKey of parent.children) {
         const child = resident[level]!.get(childKey)
