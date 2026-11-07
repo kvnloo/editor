@@ -175,6 +175,17 @@ export async function verifyPublishedRuntimeRelease(
   await verifyArchiveDigest(archiveFile, published.sha256)
 }
 
+/** Keep the release upload inside the pin check so mismatched recovery bytes cannot be published. */
+export async function uploadVerifiedRuntimeRelease(
+  archiveFile: string,
+  pinFile: string,
+  releaseVersion: string,
+  upload: () => Promise<void>,
+): Promise<void> {
+  await verifyPublishedRuntimeRelease(archiveFile, pinFile, releaseVersion)
+  await upload()
+}
+
 async function installOverride(
   paths: PascalPaths,
   override: string,
