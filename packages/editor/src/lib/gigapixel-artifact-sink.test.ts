@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   createInMemoryGigapixelArtifactSink,
   createWritableGigapixelArtifactSink,
+  verifyGigapixelArtifactReadback,
 } from '@pascal-app/editor/gigapixel-artifact-sink'
 
 describe('gigapixel artifact sinks', () => {
@@ -70,5 +71,19 @@ describe('gigapixel artifact sinks', () => {
     await sink.abort()
     expect(aborted).toBe(1)
     expect(closed).toBe(0)
+  })
+  test('streamed browser readback matches the receipt and rejects same-size corruption', async () => {
+    // SHA-256('abc') is a known test vector; changing the last byte must not pass.
+    const receipt = {
+      bytes: 3,
+      sha256: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+    }
+    await verifyGigapixelArtifactReadback(new Blob(['abc']), receipt)
+    await expect(verifyGigapixelArtifactReadback(new Blob(['abd']), receipt)).rejects.toThrow(
+      'SHA-256',
+    )
+    await expect(verifyGigapixelArtifactReadback(new Blob(['ab']), receipt)).rejects.toThrow(
+      'length',
+    )
   })
 })

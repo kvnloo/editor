@@ -54,7 +54,10 @@ import {
   GigapixelExportDenied,
   requireGigapixelExportAuthority,
 } from '../../lib/gigapixel-export-authority'
-import { createStagedGigapixelArtifactSink } from '../../lib/gigapixel-artifact-sink'
+import {
+  createStagedGigapixelArtifactSink,
+  verifyGigapixelArtifactReadback,
+} from '../../lib/gigapixel-artifact-sink'
 import type { EditorGigapixelExportHost } from '../../lib/gigapixel-editor-executor'
 import { streamGigapixelCapture } from '../../lib/gigapixel-capture'
 import {
@@ -1190,6 +1193,8 @@ export const ThumbnailGenerator = ({
                 controller.signal.throwIfAborted()
                 const blob = await host.getPublished(filename)
                 if (!blob) throw new Error('Published DeepZoom archive is missing')
+                await verifyGigapixelArtifactReadback(blob, stats.artifact)
+                controller.signal.throwIfAborted()
                 cameraData.artifact = {
                   fileName: filename,
                   mimeType: 'application/zip',

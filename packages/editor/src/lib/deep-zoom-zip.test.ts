@@ -462,14 +462,28 @@ function createOpfsFixture(moveFailure?: Error) {
   let publicRemovals = 0
   let stageRemovals = 0
   const notFound = () => ({ name: 'NotFoundError' })
+  let previous: Promise<void> = Promise.resolve()
+  const lockManager = {
+    request(_name: string, _options: { mode: 'exclusive' }, callback: () => Promise<void>) {
+      const pending = previous.then(callback)
+      previous = pending.then(() => undefined, () => undefined)
+      return pending
+    },
+  }
 
   const stagingDirectory = {
+    async *entries() {
+      for (const [name, entry] of staged) {
+        yield [name, entry.handle] as [string, FileSystemFileHandle]
+      }
+    },
     async getFileHandle(name: string, options?: { create?: boolean }) {
       let entry = staged.get(name)
       if (!entry && options?.create) {
         entry = { bytes: new Uint8Array(0), handle: {} as FileSystemFileHandle }
         const stagedEntry = entry
         const handle = {
+          kind: 'file',
           async createWritable() {
             const parts: Uint8Array[] = []
             return {
@@ -537,9 +551,16 @@ function createOpfsFixture(moveFailure?: Error) {
 
   return {
     directory,
+    lockManager,
     staged,
     visible,
     events,
+    addOrphan(name: string) {
+      staged.set(name, {
+        bytes: Uint8Array.of(99),
+        handle: { kind: 'file' } as FileSystemFileHandle,
+      })
+    },
     counts: () => ({ publicRemovals, stageRemovals }),
   }
 }
@@ -562,6 +583,7 @@ describe('createBrowserDeepZoomZipArtifactHost', () => {
     const filesystem = createOpfsFixture()
     const host = await createBrowserDeepZoomZipArtifactHost({
       directory: filesystem.directory,
+      lockManager: filesystem.lockManager,
     })
 
     await persistDeepZoomZip({ name: 'scan', ...descriptorOptions }, pyramid, host)
@@ -579,6 +601,7 @@ describe('createBrowserDeepZoomZipArtifactHost', () => {
     const filesystem = createOpfsFixture(failure)
     const host = await createBrowserDeepZoomZipArtifactHost({
       directory: filesystem.directory,
+      lockManager: filesystem.lockManager,
     })
     const stage = host.stage.bind(host)
     let discards = 0
@@ -618,5 +641,74 @@ describe('createBrowserDeepZoomZipArtifactHost', () => {
     expect(discards).toBe(1)
     expect(cleanup).toBe(1)
     expect(filesystem.counts()).toEqual({ publicRemovals: 1, stageRemovals: 0 })
+  })
+
+  test('refuses a collision without overwriting an existing Chromium OPFS ZIP', async () => {
+    const filesystem = createOpfsFixture()
+    const host = await createBrowserDeepZoomZipArtifactHost({
+      directory: filesystem.directory,
+      lockManager: filesystem.lockManager,
+      requireStagedFile: true,
+    })
+    await persistDeepZoomZip({ name: 'scan', ...descriptorOptions }, pyramid, host)
+    const first = filesystem.visible.get('scan.zip')!.handle
+    const bytes = new Uint8Array(await (await host.getPublished('scan.zip'))!.arrayBuffer())
+
+    await expect(
+      persistDeepZoomZip({ name: 'scan', ...descriptorOptions }, pyramid, host),
+    ).rejects.toThrow('already exists')
+
+    expect(filesystem.visible.get('scan.zip')!.handle).toBe(first)
+    expect(new Uint8Array(await (await host.getPublished('scan.zip'))!.arrayBuffer())).toEqual(bytes)
+    expect(filesystem.counts()).toEqual({ publicRemovals: 0, stageRemovals: 1 })
+    expect(filesystem.staged.size).toBe(0)
+  })
+
+  test('holds a cross-tab stage lease until publication or rollback', async () => {
+    const filesystem = createOpfsFixture()
+    const first = await createBrowserDeepZoomZipArtifactHost({
+      directory: filesystem.directory,
+      lockManager: filesystem.lockManager,
+      requireStagedFile: true,
+    })
+    const second = await createBrowserDeepZoomZipArtifactHost({
+      directory: filesystem.directory,
+      lockManager: filesystem.lockManager,
+      requireStagedFile: true,
+    })
+    const live = await first.stage()
+    let entered = false
+    const waiting = second.stage().then((stage) => {
+      entered = true
+      return stage
+    })
+    await Promise.resolve()
+    expect(entered).toBe(false)
+    await live.discard()
+    const next = await waiting
+    expect(entered).toBe(true)
+    await next.discard()
+    expect(filesystem.staged.size).toBe(0)
+  })
+
+  test('reclaims abandoned parts after reload and preserves unrelated files', async () => {
+    const filesystem = createOpfsFixture()
+    const abandoned = 'dzi-00000000-0000-4000-8000-000000000000.part'
+    filesystem.addOrphan(abandoned)
+    filesystem.addOrphan('keep-me.txt')
+    const host = await createBrowserDeepZoomZipArtifactHost({
+      directory: filesystem.directory,
+      lockManager: filesystem.lockManager,
+      requireStagedFile: true,
+    })
+    const live = await host.stage()
+    expect(filesystem.staged.has(abandoned)).toBe(false)
+    expect(filesystem.staged.has('keep-me.txt')).toBe(true)
+    await live.discard()
+    filesystem.addOrphan(abandoned)
+    expect(await host.recoverAbandonedStages()).toBe(1)
+    expect(filesystem.staged.has(abandoned)).toBe(false)
+    expect(filesystem.staged.has('keep-me.txt')).toBe(true)
+    expect(filesystem.counts().publicRemovals).toBe(0)
   })
 })

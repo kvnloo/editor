@@ -1,13 +1,25 @@
 import type { DeepZoomZipArtifactHost, DeepZoomZipTemporaryArtifact } from './deep-zoom-zip'
 
 const STAGING_DIRECTORY = '.deep-zoom-zip-staging'
+const STAGING_LOCK = 'pascal-deep-zoom-zip-staging-v1'
+const TEMPORARY_NAME = /^dzi-[0-9a-f-]{36}\.part$/
 
 type MovableFileHandle = FileSystemFileHandle & {
   move?: (directory: FileSystemDirectoryHandle, name: string) => Promise<void>
 }
 
+type ExclusiveLockManager = {
+  request(
+    name: string,
+    options: { mode: 'exclusive' },
+    callback: () => Promise<void>,
+  ): Promise<unknown>
+}
+
 export interface BrowserDeepZoomZipArtifactHost extends DeepZoomZipArtifactHost {
   getPublished(filename: string): Promise<Blob | undefined>
+  /** Removes incomplete stages from an interrupted page, never published ZIPs. */
+  recoverAbandonedStages(): Promise<number>
 }
 
 export interface BrowserDeepZoomZipHostOptions {
@@ -15,6 +27,8 @@ export interface BrowserDeepZoomZipHostOptions {
   directory?: FileSystemDirectoryHandle | null
   /** Refuse memory fallback for captures that must stay bounded on disk. */
   requireStagedFile?: boolean
+  /** Defaults to the browser's cross-tab Web Locks manager. */
+  lockManager?: ExclusiveLockManager
 }
 
 function isNotFound(error: unknown): boolean {
@@ -50,6 +64,56 @@ async function removeIfPresent(directory: FileSystemDirectoryHandle, name: strin
   } catch (error) {
     if (!isNotFound(error)) throw error
   }
+}
+
+/**
+ * Chromium OPFS move replaces an existing destination. Hold one origin-wide Web Lock
+ * throughout staging and the final existence check + move to prevent cooperating
+ * tabs from overwriting each other's completed ZIPs.
+ */
+async function acquireStageLock(manager: ExclusiveLockManager): Promise<() => void> {
+  let acquired!: () => void
+  let failed!: (error: unknown) => void
+  const ready = new Promise<void>((resolve, reject) => {
+    acquired = resolve
+    failed = reject
+  })
+  let unlock!: () => void
+  const held = new Promise<void>((resolve) => {
+    unlock = resolve
+  })
+  try {
+    void manager
+      .request(STAGING_LOCK, { mode: 'exclusive' }, async () => {
+        acquired()
+        await held
+      })
+      .catch(failed)
+  } catch (error) {
+    failed(error)
+  }
+  await ready
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    unlock()
+  }
+}
+
+async function clearAbandonedStages(staging: FileSystemDirectoryHandle): Promise<number> {
+  const enumerable = staging as FileSystemDirectoryHandle & {
+    entries(): AsyncIterable<[string, FileSystemHandle]>
+  }
+  if (typeof enumerable.entries !== 'function') {
+    throw new Error('This browser cannot enumerate abandoned DeepZoom staging files')
+  }
+  const abandoned: string[] = []
+  for await (const [name, entry] of enumerable.entries()) {
+    if (entry.kind === 'file' && TEMPORARY_NAME.test(name)) abandoned.push(name)
+  }
+  for (const name of abandoned) await removeIfPresent(staging, name)
+  return abandoned.length
 }
 
 function memoryStage(
@@ -92,75 +156,91 @@ function memoryStage(
 
 async function fileStage(
   directory: FileSystemDirectoryHandle,
+  locks: ExclusiveLockManager | undefined,
 ): Promise<DeepZoomZipTemporaryArtifact | undefined> {
-  if (!globalThis.crypto?.randomUUID) return undefined
+  if (!globalThis.crypto?.randomUUID || !locks) return undefined
 
-  // Only the root is a published artifact namespace; partial ZIPs live in a child directory.
-  const staging = await directory.getDirectoryHandle(STAGING_DIRECTORY, { create: true })
-  const temporaryName = 'dzi-' + globalThis.crypto.randomUUID() + '.part'
-  const file = (await staging.getFileHandle(temporaryName, { create: true })) as MovableFileHandle
-
-  // Closing a writable does not atomically create a new destination name. Without move and
-  // identity checks, publishing to the root cannot satisfy the rollback contract.
-  if (typeof file.move !== 'function' || typeof file.isSameEntry !== 'function') {
-    await removeIfPresent(staging, temporaryName)
-    return undefined
-  }
-
-  let writable: FileSystemWritableFileStream
+  const unlock = await acquireStageLock(locks)
   try {
-    writable = await file.createWritable()
-  } catch (error) {
-    await removeIfPresent(staging, temporaryName)
-    throw error
-  }
+    // The lease excludes live stages in other same-origin tabs while recovering after reload.
+    const staging = await directory.getDirectoryHandle(STAGING_DIRECTORY, { create: true })
+    await clearAbandonedStages(staging)
+    const temporaryName = 'dzi-' + globalThis.crypto.randomUUID() + '.part'
+    const file = (await staging.getFileHandle(temporaryName, { create: true })) as MovableFileHandle
 
-  let closed = false
-  let published = false
-  let discarded = false
-  let attemptedName: string | undefined
+    if (typeof file.move !== 'function' || typeof file.isSameEntry !== 'function') {
+      await removeIfPresent(staging, temporaryName)
+      unlock()
+      return undefined
+    }
 
-  return {
-    async write(chunk) {
-      if (closed || published || discarded) throw new Error('ZIP staging is already finished')
-      await writable.write(new Uint8Array(chunk))
-    },
-    async publish(filename) {
-      if (closed || published || discarded) throw new Error('ZIP staging is already finished')
-      validateFilename(filename)
-      await writable.close()
-      closed = true
-      if (await findFile(directory, filename)) {
-        throw new Error('ZIP artifact already exists: ' + filename)
-      }
-      attemptedName = filename
-      await file.move!(directory, filename)
-      published = true
-    },
-    async discard() {
-      if (discarded) return
-      discarded = true
-      if (!closed) {
-        try {
-          await writable.abort()
-        } catch {
-          // Removing the private staging file is the authoritative rollback.
-        }
+    let writable: FileSystemWritableFileStream
+    try {
+      writable = await file.createWritable()
+    } catch (error) {
+      await removeIfPresent(staging, temporaryName)
+      throw error
+    }
+
+    let closed = false
+    let published = false
+    let discarded = false
+    let attemptedName: string | undefined
+
+    return {
+      async write(chunk) {
+        if (closed || published || discarded) throw new Error('ZIP staging is already finished')
+        await writable.write(new Uint8Array(chunk))
+      },
+      async publish(filename) {
+        if (closed || published || discarded) throw new Error('ZIP staging is already finished')
+        validateFilename(filename)
+        await writable.close()
         closed = true
-      }
-      try {
-        // A rejected move or failed host delivery can leave our own published file.
-        // Never delete another file with the same name.
-        if (attemptedName) {
-          const destination = await findFile(directory, attemptedName)
-          if (destination && (await destination.isSameEntry(file))) {
-            await directory.removeEntry(attemptedName)
+        if (await findFile(directory, filename)) {
+          throw new Error('ZIP artifact already exists: ' + filename)
+        }
+        attemptedName = filename
+        await file.move!(directory, filename)
+        const destination = await findFile(directory, filename)
+        if (!destination || !(await destination.isSameEntry(file))) {
+          throw new Error('DeepZoom ZIP publication could not verify its file identity')
+        }
+        published = true
+        unlock()
+      },
+      async discard() {
+        if (discarded) return
+        discarded = true
+        if (!closed) {
+          try {
+            await writable.abort()
+          } catch {
+            // Removing the private staging file is the authoritative rollback.
+          }
+          closed = true
+        }
+        try {
+          // A rejected move or failed host delivery can leave our own published file.
+          // Never delete another file with the same name.
+          if (attemptedName) {
+            const destination = await findFile(directory, attemptedName)
+            if (destination && (await destination.isSameEntry(file))) {
+              await directory.removeEntry(attemptedName)
+            }
+          }
+        } finally {
+          try {
+            await removeIfPresent(staging, temporaryName)
+          } finally {
+            unlock()
           }
         }
-      } finally {
-        await removeIfPresent(staging, temporaryName)
-      }
-    },
+      },
+    }
+  } catch (error) {
+    unlock()
+    throw error
   }
 }
 
@@ -175,25 +255,26 @@ async function originPrivateDirectory(): Promise<FileSystemDirectoryHandle | nul
 }
 
 /**
- * Uses OPFS atomic move when the browser supports it, otherwise publishes a Blob in memory.
- * The host supplies directory access/authorization; no public files exist before publish.
- * In-memory artifacts can be retrieved through getPublished and handed to a download UI.
+ * Stages in a private directory and atomically moves the finalized ZIP into the
+ * host-authorized destination. Cross-tab writers must honor the same Web Lock.
+ * Unsupported persistent staging may fall back to an in-memory Blob when allowed.
  */
 export async function createBrowserDeepZoomZipArtifactHost(
   options: BrowserDeepZoomZipHostOptions = {},
 ): Promise<BrowserDeepZoomZipArtifactHost> {
   const directory =
     options.directory === undefined ? await originPrivateDirectory() : options.directory
+  const locks = options.lockManager ?? globalThis.navigator?.locks
   const published = new Map<string, Blob>()
 
   return {
     async stage() {
       if (directory) {
-        const stagedFile = await fileStage(directory)
+        const stagedFile = await fileStage(directory, locks)
         if (stagedFile) return stagedFile
       }
       if (options.requireStagedFile) {
-        throw new Error('Persistent DeepZoom ZIP staging is unavailable')
+        throw new Error('Persistent DeepZoom ZIP staging requires OPFS move and Web Locks')
       }
       return memoryStage(published, directory)
     },
@@ -204,6 +285,17 @@ export async function createBrowserDeepZoomZipArtifactHost(
       if (!directory) return undefined
       const file = await findFile(directory, filename)
       return file?.getFile()
+    },
+    async recoverAbandonedStages() {
+      if (!directory) return 0
+      if (!locks) throw new Error('DeepZoom ZIP recovery requires cross-tab Web Locks')
+      const unlock = await acquireStageLock(locks)
+      try {
+        const staging = await directory.getDirectoryHandle(STAGING_DIRECTORY, { create: true })
+        return await clearAbandonedStages(staging)
+      } finally {
+        unlock()
+      }
     },
   }
 }

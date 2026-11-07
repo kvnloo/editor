@@ -123,6 +123,39 @@ class ZipSha256 {
   }
 }
 
+/**
+ * Re-read the published File or Blob from its actual storage handle. A matching
+ * length alone is insufficient: disk publication must match the streamed receipt.
+ * The readback uses bounded chunks rather than buffering a gigapixel ZIP.
+ */
+export async function verifyGigapixelArtifactReadback(
+  blob: Blob,
+  receipt: Pick<GigapixelArtifactReceipt, 'bytes' | 'sha256'>,
+): Promise<void> {
+  if (blob.size !== receipt.bytes) {
+    throw new Error('Published DeepZoom ZIP length differs from its receipt')
+  }
+  const hasher = new ZipSha256()
+  const reader = blob.stream().getReader()
+  let bytes = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (!Number.isSafeInteger(bytes + value.byteLength)) {
+        throw new RangeError('Published DeepZoom ZIP byte count is not a safe integer')
+      }
+      hasher.update(value)
+      bytes += value.byteLength
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  if (bytes !== receipt.bytes || hasher.digestHex() !== receipt.sha256) {
+    throw new Error('Published DeepZoom ZIP does not match its streamed SHA-256 receipt')
+  }
+}
+
 interface ChunkDestination {
   write(bytes: Uint8Array): Promise<void>
   finish(): Promise<void>
