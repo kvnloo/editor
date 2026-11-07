@@ -39,8 +39,9 @@ function integerAttribute(
 }
 
 export function parseDeepZoomDescriptor(xml: string): ParsedDeepZoomDescriptor {
-  const image = elementAttributes(xml, 'Image')
-  const size = elementAttributes(xml, 'Size')
+  const descriptor = xml.replace(/<!--[\s\S]*?-->|<\?[\s\S]*?\?>/g, '')
+  const image = elementAttributes(descriptor, 'Image')
+  const size = elementAttributes(descriptor, 'Size')
 
   const width = integerAttribute(size, 'Width', 1)
   const height = integerAttribute(size, 'Height', 1)

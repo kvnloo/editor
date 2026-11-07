@@ -6,6 +6,25 @@ import {
 } from '@pascal-app/viewer/capture'
 
 describe('DeepZoom source', () => {
+  test('ignores XML comments and processing instructions before the descriptor', () => {
+    const xml = [
+      '<?xml version="1.0"?>',
+      '<!-- <Image TileSize="1" Overlap="0" Format="png"><Size Width="1" Height="1" /></Image> -->',
+      '<?hint <Image TileSize="2" Overlap="0" Format="jpeg"><Size Width="2" Height="2" /></Image>?>',
+      '<Image TileSize="512" Overlap="1" Format="webp">',
+      '  <Size Width="32" Height="16" />',
+      '</Image>',
+    ].join('\n')
+
+    expect(parseDeepZoomDescriptor(xml)).toEqual({
+      width: 32,
+      height: 16,
+      tileSize: 512,
+      overlap: 1,
+      format: 'webp',
+    })
+  })
+
   test('parses a vips dzsave WebP descriptor', () => {
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <Image xmlns="http://schemas.microsoft.com/deepzoom/2008"
