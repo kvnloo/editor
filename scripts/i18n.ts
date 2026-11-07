@@ -256,6 +256,7 @@ type BranchPayload = {
   placeholders: string[]
   tagTokens: string[]
   balanced: boolean
+  exactPluralChoice: boolean
 }
 
 function branchPayloads(tokens: CompiledToken[]): Map<string, BranchPayload[]> {
@@ -294,6 +295,7 @@ function branchPayloads(tokens: CompiledToken[]): Map<string, BranchPayload[]> {
           placeholders: [...placeholders].sort(),
           tagTokens: tags(markup).sort(),
           balanced: validTagNesting(markup),
+          exactPluralChoice: type !== 'select' && /^=?-?\d+(?:\.\d+)?$/.test(branch),
         }
         const key = JSON.stringify(branchPath)
         branches.set(key, [...(branches.get(key) ?? []), payload])
@@ -430,6 +432,22 @@ export function validateTranslation(
       branchErrors.add('rich-text tag nesting differs from English in ICU branches')
     }
   }
+  const requireMatchingExactChoices = (
+    from: Map<string, BranchPayload[]>,
+    to: Map<string, BranchPayload[]>,
+  ) => {
+    for (const [path, payloads] of from) {
+      if (!payloads[0]?.exactPluralChoice || to.has(path)) continue
+      const choicePath = JSON.parse(path) as string[]
+      const parentPath = choicePath.slice(0, -1)
+      // A locale may omit a named plural arm and all its nested choices.
+      if (parentPath.length === 0 || to.has(JSON.stringify(parentPath))) {
+        branchErrors.add('explicit plural choices differ from English')
+      }
+    }
+  }
+  requireMatchingExactChoices(sourceBranches, translatedBranches)
+  requireMatchingExactChoices(translatedBranches, sourceBranches)
   errors.push(...branchErrors)
 
   const sourcePlurals = plurals(sourceTokens)

@@ -308,6 +308,75 @@ test('ICU branch payloads retain their own markup and placeholders', () => {
   ).toEqual([])
 })
 
+test('ICU exact-number plural and ordinal arms retain their selectors', () => {
+  const source = '{count, plural, =0 {No {name}} one {One {name}} other {Many {name}}}'
+  const missing = '{count, plural, one {Un {name}} other {Plusieurs {name}}}'
+  const exactError = 'explicit plural choices differ from English'
+
+  expect(validateTranslation(source, missing, 'en')).toContain(exactError)
+  expect(
+    validateTranslation(
+      source,
+      '{count, plural, =1 {Aucun {name}} one {Un {name}} other {Plusieurs {name}}}',
+      'en',
+    ),
+  ).toContain(exactError)
+  expect(
+    validateTranslation(
+      '{count, plural, one {One} other {Many}}',
+      '{count, plural, =0 {Aucun} one {Un} other {Plusieurs}}',
+      'en',
+    ),
+  ).toContain(exactError)
+  expect(
+    validateTranslation(
+      source,
+      '{count, plural, other {Plusieurs {name}} =0 {Aucun {name}} one {Un {name}}}',
+      'en',
+    ),
+  ).toEqual([])
+  expect(
+    validateTranslation(source, '{count, plural, other {多数 {name}} =0 {なし {name}}}', 'ja'),
+  ).toEqual([])
+  expect(validateTranslation(source, '{count, plural, other {多数 {name}}}', 'ja')).toContain(
+    exactError,
+  )
+
+  const ordinal =
+    '{rank, selectordinal, =0 {Unranked} one {#st} two {#nd} few {#rd} other {#th}}'
+  expect(
+    validateTranslation(
+      ordinal,
+      '{rank, selectordinal, one {#st} two {#nd} few {#rd} other {#th}}',
+      'en',
+    ),
+  ).toContain(exactError)
+  expect(
+    validateTranslation(
+      ordinal,
+      '{rank, selectordinal, other {#th} few {#rd} =0 {Unranked} two {#nd} one {#st}}',
+      'en',
+    ),
+  ).toEqual([])
+
+  expect(
+    validateTranslation(
+      '{state, select, draft {{count, plural, =0 {None} other {Many}}} other {Other}}',
+      '{state, select, other {Autre} draft {{count, plural, other {Plusieurs}}}}',
+      'ja',
+    ),
+  ).toContain(exactError)
+  const omittedNamedArm =
+    '{count, plural, one {{extra, selectordinal, =0 {Zero} other {One}}} other {{extra, selectordinal, other {Many}}}}'
+  expect(
+    validateTranslation(
+      omittedNamedArm,
+      '{count, plural, other {{extra, selectordinal, other {多数}}}}',
+      'ja',
+    ),
+  ).toEqual([])
+})
+
 test('source drift fails checking, then extraction updates English and flags translations', () => {
   const root = catalogProject()
   const sample = join(root, 'packages/editor/src/sample.tsx')
