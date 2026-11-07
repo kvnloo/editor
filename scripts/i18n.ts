@@ -206,7 +206,7 @@ function tags(message: string): string[] {
     }
     if (end >= message.length) continue
     const token = message.slice(start, end + 1)
-    if (/^<\s*[A-Za-z!/]/.test(token)) found.push(token)
+    if (/^<\s*[A-Za-z!/]/.test(token) || /^<\d+\s*\/?>$/.test(token)) found.push(token)
   }
   return found
 }
@@ -214,7 +214,7 @@ function tags(message: string): string[] {
 function validTagNesting(message: string): boolean {
   const open: string[] = []
   for (const token of tags(message)) {
-    const match = /^<\s*(\/?)\s*([A-Za-z][\w:-]*)/.exec(token)
+    const match = /^<\s*(\/?)\s*([A-Za-z][\w:-]*|\d+)(?=[\s/>])/.exec(token)
     if (!match) continue
     const name = match[2]
     if (!name) continue

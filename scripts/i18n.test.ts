@@ -229,6 +229,29 @@ test('rich-text validation rejects crossed or unbalanced nesting', () => {
   ).toEqual([])
 })
 
+test('rich-text validation checks numbered tag identity and nesting', () => {
+  const source = '<0><1>Save</1></0>'
+  expect(validateTranslation('<0>Save</0>', '<0>Enregistrer</0>', 'fr')).toEqual([])
+  expect(validateTranslation('<0>Save</0>', '<1>Enregistrer</0>', 'fr')).toContain(
+    'rich-text tags differ from English',
+  )
+  expect(validateTranslation('<0>Save</0>', '<0>Enregistrer</1>', 'fr')).toContain(
+    'rich-text tags differ from English',
+  )
+  expect(validateTranslation(source, '<0><1>Enregistrer</0></1>', 'fr')).toContain(
+    'rich-text tag nesting differs from English',
+  )
+  expect(validateTranslation(source, '<0><1>Enregistrer</1>', 'fr')).toContain(
+    'rich-text tag nesting differs from English',
+  )
+  expect(validateTranslation(source, '<1><0>Enregistrer</0></1>', 'fr')).toEqual([])
+  expect(validateTranslation('Save <0/>', 'Enregistrer <0/>', 'fr')).toEqual([])
+  expect(validateTranslation('Save <0/>', 'Enregistrer <1/>', 'fr')).toContain(
+    'rich-text tags differ from English',
+  )
+  expect(validateTranslation('2 < 3 > 1', '2 < 4 > 1', 'fr')).toEqual([])
+})
+
 test('source drift fails checking, then extraction updates English and flags translations', () => {
   const root = catalogProject()
   const sample = join(root, 'packages/editor/src/sample.tsx')
