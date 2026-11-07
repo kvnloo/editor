@@ -11,20 +11,44 @@ export function createEditorGigapixelExportHost(
   authority: Pick<GigapixelExportHost, 'getActiveProjectId' | 'authorizeGigapixelExport'>,
 ): EditorGigapixelExportHost {
   let capture: Capture | undefined
+  const activeExports = new Set<AbortController>()
   return {
     ...authority,
-    exportZip(request) {
-      if (!capture) {
+    async exportZip(request) {
+      const mountedCapture = capture
+      if (!mountedCapture) {
         throw new GigapixelExportDenied('export_unavailable', 'No trusted editor renderer is mounted')
       }
       request.signal?.throwIfAborted()
-      return capture(request)
+      const controller = new AbortController()
+      const forwardAbort = () => controller.abort(request.signal?.reason)
+      request.signal?.addEventListener('abort', forwardAbort, { once: true })
+      if (request.signal?.aborted) forwardAbort()
+      activeExports.add(controller)
+      try {
+        controller.signal.throwIfAborted()
+        const artifact = await mountedCapture({ ...request, signal: controller.signal })
+        if (controller.signal.aborted) {
+          await artifact.rollback()
+          controller.signal.throwIfAborted()
+        }
+        return artifact
+      } finally {
+        activeExports.delete(controller)
+        request.signal?.removeEventListener('abort', forwardAbort)
+      }
     },
     attachCapture(next) {
       if (capture) throw new Error('A DeepZoom export renderer is already mounted')
       capture = next
       return () => {
-        if (capture === next) capture = undefined
+        if (capture !== next) return
+        capture = undefined
+        for (const controller of activeExports) {
+          controller.abort(
+            new GigapixelExportDenied('export_unavailable', 'DeepZoom renderer detached during export'),
+          )
+        }
       }
     },
   }

@@ -77,6 +77,7 @@ function hostFor(
         fileName: 'capture.deepzoom.zip',
         mimeType: 'application/zip' as const,
         ...stats.artifact,
+        rollback: () => sink.rollback(),
       }
     },
   }
@@ -183,7 +184,13 @@ describe('hosted command using the shared gigapixel export operation', () => {
     const detach = host.attachCapture(async (request) => {
       const result = await producer.exportZip(request)
       if (activity.captures === 3) activity.active = 'project-b'
-      return { ...result, rollback: async () => { rollbacks++ } }
+      return {
+        ...result,
+        rollback: async () => {
+          await result.rollback()
+          rollbacks++
+        },
+      }
     })
     const hosted = await runHostedGigapixelExport({}, host)
     expect(hosted).toEqual(await executeGigapixelExport({}, host))

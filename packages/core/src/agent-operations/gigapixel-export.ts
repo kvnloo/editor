@@ -33,7 +33,7 @@ export type GigapixelExportHost = {
   exportZip(request: {
     grant: GigapixelExportGrant
     signal?: AbortSignal
-  }): Promise<GigapixelExportArtifact & { rollback?: () => Promise<void> }>
+  }): Promise<GigapixelExportArtifact & { rollback: () => Promise<void> }>
 }
 
 /**
@@ -70,6 +70,12 @@ export async function executeGigapixelExport(
     signal?.throwIfAborted()
     assertGigapixelExportStillActive(grant, currentProjectId)
     const artifact = await host.exportZip({ grant, signal })
+    if (typeof artifact.rollback !== 'function') {
+      throw new AgentRefusal(
+        'export_unavailable',
+        'The editor host did not provide a rollback-capable DeepZoom ZIP receipt.',
+      )
+    }
     rollback = artifact.rollback
     assertGigapixelExportStillActive(grant, currentProjectId)
     signal?.throwIfAborted()

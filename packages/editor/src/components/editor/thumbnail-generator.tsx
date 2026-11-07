@@ -404,21 +404,42 @@ const SCENE_BUILD_MAX_MS = 120_000
  * moving (a node no system settles) lets the capture go. Returns the count
  * left.
  */
-async function untilSceneBuilt(): Promise<number> {
+async function untilSceneBuilt(
+  signal?: AbortSignal,
+  assertCurrent?: () => void,
+): Promise<number> {
   const started = performance.now()
   let pending = pendingSceneBuildCount()
   let changedAt = started
+  signal?.throwIfAborted()
+  assertCurrent?.()
   while (pending > 0) {
+    signal?.throwIfAborted()
+    assertCurrent?.()
     if (isTabHidden()) throw new Error(HIDDEN_TAB)
     const now = performance.now()
     if (now - changedAt > SCENE_BUILD_STALL_MS || now - started > SCENE_BUILD_MAX_MS) break
-    await new Promise((resolve) => setTimeout(resolve, 100))
+    await new Promise<void>((resolve, reject) => {
+      const onAbort = () => {
+        clearTimeout(timer)
+        reject(signal?.reason ?? new DOMException('Scene build cancelled', 'AbortError'))
+      }
+      const timer = setTimeout(() => {
+        signal?.removeEventListener('abort', onAbort)
+        resolve()
+      }, 100)
+      signal?.addEventListener('abort', onAbort, { once: true })
+    })
+    signal?.throwIfAborted()
+    assertCurrent?.()
     const next = pendingSceneBuildCount()
     if (next !== pending) {
       pending = next
       changedAt = performance.now()
     }
   }
+  signal?.throwIfAborted()
+  assertCurrent?.()
   return pending
 }
 
@@ -836,6 +857,24 @@ export const ThumbnailGenerator = ({
                   authorizeGigapixelExportRef.current,
                 )
               : null)
+          const assertCaptureCurrent = () => {
+            agent?.signal?.throwIfAborted()
+            if (
+              version !== captureVersion.current ||
+              perspectiveCamera !== thumbnailCameraRef.current
+            ) {
+              throw new GigapixelExportDenied(
+                'permission_denied',
+                'The scene changed during DeepZoom export',
+              )
+            }
+            if (exportAuthority) {
+              assertGigapixelExportStillActive(
+                exportAuthority,
+                () => useViewer.getState().projectId,
+              )
+            }
+          }
           if (!onCapture) {
             if (gigapixel) {
               throw new GigapixelExportDenied('export_unavailable', 'Snapshot delivery is unavailable')
@@ -988,9 +1027,13 @@ export const ThumbnailGenerator = ({
               // frames — run by hand, never awaited from the animation loop: a
               // hidden tab gets no animation frames at all, and a capture that
               // waited on one hung the sheet's whole capture chain (2026-09-10)
-              const pending = await untilSceneBuilt()
+              const pending = await untilSceneBuilt(
+                agent?.signal,
+                gigapixel ? assertCaptureCurrent : undefined,
+              )
               trace('scene-built', { pending })
               await pumpFrames(advance, clock, 2)
+              if (gigapixel) assertCaptureCurrent()
             }
 
             // the scene as the picture wants it, for one render; `restore` puts
@@ -1097,12 +1140,13 @@ export const ThumbnailGenerator = ({
               if (!exportAuthority) {
                 throw new GigapixelExportDenied('export_unavailable', 'DeepZoom export is not authorized')
               }
-              assertGigapixelExportStillActive(exportAuthority, () => useViewer.getState().projectId)
+              assertCaptureCurrent()
               if (!pipeline) throw new Error('Snapshot renderer is not ready. Try again.')
               const host = await createBrowserDeepZoomZipArtifactHost({
                 directory: exportAuthority.directory,
                 requireStagedFile: true,
               })
+              assertCaptureCurrent()
               const filename = 'capture-' + globalThis.crypto.randomUUID() + '.deepzoom.zip'
               const sink = await createStagedGigapixelArtifactSink(host, filename)
               const controller = new AbortController()
@@ -1111,12 +1155,17 @@ export const ThumbnailGenerator = ({
               if (agent?.signal?.aborted) abortFromAgent()
               activeGigapixelCapture.current = controller
               try {
+                assertCaptureCurrent()
                 const stats = await streamGigapixelCapture(
                   {
                     name: 'capture',
                     width,
                     height,
                     signal: controller.signal,
+                    assertCanPublish: () => {
+                      controller.signal.throwIfAborted()
+                      assertCaptureCurrent()
+                    },
                     passEdge: limits.passEdge,
                     renderOverlap: TILE_OVERLAP,
                     tileSize: 512,

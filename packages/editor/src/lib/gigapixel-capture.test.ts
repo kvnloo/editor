@@ -268,4 +268,75 @@ describe('streamGigapixelCapture', () => {
     expect(published).toBe(0)
   })
 
+
+  test('a project switch during the final readback cannot publish into its old destination', async () => {
+    let activeProject = 'project-a'
+    let captureVersion = 1
+    const published = new Map<string, Blob>()
+    const chunks: Uint8Array[] = []
+    let readbacks = 0
+    let releaseFinal!: () => void
+    let announceFinal!: () => void
+    const finalReadback = new Promise<void>((resolve) => {
+      releaseFinal = resolve
+    })
+    const finalReadbackStarted = new Promise<void>((resolve) => {
+      announceFinal = resolve
+    })
+    const sink = await createStagedGigapixelArtifactSink(
+      {
+        stage() {
+          return {
+            write(bytes) {
+              chunks.push(bytes.slice())
+            },
+            publish(filename) {
+              published.set(filename, new Blob(chunks, { type: 'application/zip' }))
+            },
+            discard() {
+              chunks.length = 0
+              published.clear()
+            },
+          }
+        },
+      },
+      'capture.deepzoom.zip',
+    )
+    const pending = streamGigapixelCapture(
+      {
+        name: 'capture',
+        width: 6,
+        height: 2,
+        passEdge: 4,
+        tileSize: 1,
+        overlap: 0,
+        renderOverlap: 0,
+        assertCanPublish: () => {
+          if (activeProject !== 'project-a' || captureVersion !== 1) {
+            throw new Error('The capture project is no longer current')
+          }
+        },
+      },
+      async (render) => {
+        readbacks += 1
+        if (readbacks === 2) {
+          announceFinal()
+          await finalReadback
+        }
+        return new Uint8ClampedArray(render.w * render.h * 4)
+      },
+      (rgba) => new Uint8Array(rgba),
+      sink,
+    )
+    await finalReadbackStarted
+    expect(readbacks).toBe(2)
+    expect(chunks.length).toBeGreaterThan(0)
+    expect(published.size).toBe(0)
+    activeProject = 'project-b'
+    captureVersion += 1
+    releaseFinal()
+    await expect(pending).rejects.toThrow('The capture project is no longer current')
+    expect(published.size).toBe(0)
+  })
+
 })

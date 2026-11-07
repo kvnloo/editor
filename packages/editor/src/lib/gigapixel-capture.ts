@@ -15,6 +15,8 @@ import type { GigapixelArtifactReceipt, GigapixelArtifactSink } from './gigapixe
 export interface StreamGigapixelOptions extends GigapixelCaptureOptions {
   name: string
   signal?: AbortSignal
+  /** Trusted host check of project and capture version at the publication boundary. */
+  assertCanPublish?: () => void
 }
 
 export type GigapixelRenderPass = (
@@ -317,6 +319,9 @@ async function captureToSink(
     throw new Error('Readback and retained fragments exceeded the capture plan')
   }
 
+  checkCancelled()
+  options.assertCanPublish?.()
+  checkCancelled()
   const artifact = await sink.finish()
   return {
     passes: plan.passes.length,
