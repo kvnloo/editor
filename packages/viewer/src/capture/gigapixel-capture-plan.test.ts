@@ -67,16 +67,14 @@ describe('gigapixel capture plan', () => {
     expect(plan.passes.at(-1)!.retainedPixelsAfter).toBe(0)
   })
 
-  test('bounds retained source pixels well below three 4096-square buffers', () => {
+  test('bounds readbacks, copied fragments and pyramid buffers below five full passes', () => {
     const plan = planGigapixelCapture(large)
-    // One full-image DZI boundary row, at most one extra pass-width row,
-    // two active boundary columns, and the current render buffer.
-    const conservativeBound =
-      4096 ** 2 + (32_768 + 2 * 4096) * 514 + 2 * (4096 + 20) * 514
-    expect(conservativeBound).toBe(42_061_904)
-    expect(plan.peakResidentPixels).toBeLessThanOrEqual(conservativeBound)
-    expect(plan.peakResidentPixels).toBeLessThan(3 * 4096 ** 2)
-    expect(plan.peakResidentPixels).toBeGreaterThan(0)
+    // Loose budget for readback + ready copies + unfinished seams + pyramid
+    // children/assembly, still far smaller than a full-image buffer.
+    const conservativeBound = 5 * 4096 ** 2
+    expect(conservativeBound).toBe(83_886_080)
+    expect(plan.peakResidentPixels).toBeLessThan(conservativeBound)
+    expect(plan.peakResidentPixels).toBeGreaterThan(2 * 4096 ** 2)
   })
 
   test('one render pass emits all DZI tiles without keeping fragments', () => {
@@ -86,7 +84,8 @@ describe('gigapixel capture plan', () => {
     expect(plan.passes[0]!.render.inner).toEqual({ x: 0, y: 0, w: 1920, h: 1080 })
     expect(plan.passes[0]!.emittedTiles).toEqual(deepZoomTiles(1920, 1080, 512, 1))
     expect(plan.passes[0]!.retainedPixelsAfter).toBe(0)
-    expect(plan.peakResidentPixels).toBe(2_073_600)
+    // 1920*1080 readback + (1926*1084) overlap-expanded ready copies.
+    expect(plan.peakResidentPixels).toBe(4_161_384)
   })
 
   test('a DZI seam tile waits for the second render pass', () => {

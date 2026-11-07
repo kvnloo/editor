@@ -93,6 +93,38 @@ describe('streamGigapixelCapture', () => {
     expect(captured.planPeakResidentPixels).toBe(plan.peakResidentPixels)
   })
 
+  test('counts ready tile copies and pyramid assembly in its resident budget', async () => {
+    const small = {
+      name: 'small',
+      width: 4,
+      height: 4,
+      passEdge: 4,
+      tileSize: 2,
+      overlap: 0,
+      renderOverlap: 0,
+    }
+    const plan = planGigapixelCapture(small)
+    expect(plan.passes).toHaveLength(1)
+    expect(plan.passes[0]!.retainedPixelsAfter).toBe(0)
+    // 16 readback + 16 ready copies = 32; after readback release:
+    // 4 ready-copy pixels + 16 completed children + 16 parent source + 4 half = 40.
+    expect(plan.peakResidentPixels).toBe(40)
+
+    const sink = createInMemoryGigapixelArtifactSink()
+    const actual = await streamGigapixelCapture(
+      small,
+      (render) => new Uint8ClampedArray(render.w * render.h * 4),
+      (rgba) => new Uint8Array(rgba),
+      sink,
+    )
+    expect(actual.passes).toBe(1)
+    expect(actual.tilesWritten).toBe(6)
+    expect(actual.peakResidentPixels).toBe(40)
+    expect(actual.planPeakResidentPixels).toBe(plan.peakResidentPixels)
+    const entries = unzipSync(new Uint8Array(await sink.blob().arrayBuffer()))
+    expect(Object.keys(entries)).toHaveLength(7)
+  })
+
   test('rejects an incorrect render readback instead of writing a partial success', async () => {
     await expect(
       streamGigapixelCapture(
