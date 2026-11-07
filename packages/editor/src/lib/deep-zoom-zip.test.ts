@@ -6,7 +6,12 @@ import {
   persistDeepZoomZip,
   streamDeepZoomZip,
 } from '@pascal-app/editor/deep-zoom-zip'
-import { deepZoomDescriptor } from '@pascal-app/viewer/capture'
+import {
+  deepZoomDescriptor,
+  deepZoomTilesUrl,
+  deepZoomTileUrl,
+  parseDeepZoomDescriptor,
+} from '@pascal-app/viewer/capture'
 import { strFromU8, unzipSync } from 'fflate'
 
 const descriptorOptions = {
@@ -95,6 +100,26 @@ describe('streamDeepZoomZip', () => {
       const path = 'scan_files/' + tile.level + '/' + tile.col + '_' + tile.row + '.webp'
       expect(entries[path]).toEqual(tile.bytes)
     }
+  })
+
+  test('resolves uppercase format to the emitted archive tile path', async () => {
+    const chunks: Uint8Array[] = []
+    await streamDeepZoomZip(
+      { name: 'scan', width: 1, height: 1, tileSize: 1, overlap: 0, format: 'WEBP' },
+      [{ level: 0, col: 0, row: 0, bytes: Uint8Array.of(1) }],
+      (chunk) => {
+        chunks.push(chunk.slice())
+      },
+    )
+
+    const entries = unzipSync(concatenate(chunks))
+    expect(Object.keys(entries)).toEqual(['scan.dzi', 'scan_files/0/0_0.webp'])
+    const descriptor = strFromU8(entries['scan.dzi']!)
+    expect(descriptor).toContain('Format="webp"')
+    const parsed = parseDeepZoomDescriptor(descriptor)
+    expect(parsed.format).toBe('webp')
+    const path = deepZoomTileUrl(deepZoomTilesUrl('scan.dzi'), 0, 0, 0, parsed.format)
+    expect(entries[path]).toEqual(Uint8Array.of(1))
   })
 
   test('waits for an async sink before requesting the next tile', async () => {

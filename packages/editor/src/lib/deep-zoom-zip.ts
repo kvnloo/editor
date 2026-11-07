@@ -36,7 +36,8 @@ export async function streamDeepZoomZip(
     throw new RangeError('format must be a filename extension')
   }
 
-  const descriptor = deepZoomDescriptor(options)
+  const normalizedFormat = format.toLowerCase()
+  const descriptor = deepZoomDescriptor({ ...options, format: normalizedFormat })
   const maxLevel = deepZoomMaxLevel(width, height)
   // fflate does not await its callback; serialize chunks before requesting another entry.
   let drained: Promise<void> = Promise.resolve()
@@ -87,7 +88,7 @@ export async function streamDeepZoomZip(
       }
 
       await addEntry(
-        name + '_files/' + tile.level + '/' + tile.col + '_' + tile.row + '.' + format,
+        name + '_files/' + tile.level + '/' + tile.col + '_' + tile.row + '.' + normalizedFormat,
         tile.bytes,
       )
     }
