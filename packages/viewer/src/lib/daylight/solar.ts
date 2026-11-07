@@ -128,8 +128,7 @@ export type TimeOfDay = keyof typeof PRESET_ELEVATION
  */
 export function presetInstant(day: Date, lat: number, lng: number, preset: TimeOfDay): Date {
   // Solar noon in UTC for this longitude: 12:00 local mean time.
-  const noonUtc =
-    Date.UTC(day.getFullYear(), day.getMonth(), day.getDate(), 12) - (lng / 15) * 3_600_000
+  const noonUtc = meanMidnightUtc(day, lng) + 12 * 3_600_000
   const target = PRESET_ELEVATION[preset]
   let best = noonUtc
   let bestScore = Number.POSITIVE_INFINITY
@@ -150,7 +149,10 @@ export function presetInstant(day: Date, lat: number, lng: number, preset: TimeO
  * timezone): 720 is roughly when the sun is highest, give or take the equation of time.
  */
 function meanMidnightUtc(day: Date, lng: number): number {
-  return Date.UTC(day.getFullYear(), day.getMonth(), day.getDate()) - (lng / 15) * 3_600_000
+  // Resolve the date at the site's mean-solar longitude, not in the host time zone.
+  const offsetMs = (lng / 15) * 3_600_000
+  const siteDay = new Date(day.getTime() + offsetMs)
+  return Date.UTC(siteDay.getUTCFullYear(), siteDay.getUTCMonth(), siteDay.getUTCDate()) - offsetMs
 }
 
 /** The instant `minutes` after local mean midnight on `day` at longitude `lng`. */

@@ -1,5 +1,6 @@
 // @ts-expect-error — Bun types are not part of the viewer's production declaration build.
 import { describe, expect, test } from 'bun:test'
+import { spawnSync } from 'node:child_process'
 import { SiteNode } from '@pascal-app/core'
 import { presetInstant, solarLight, solarPosition } from '@pascal-app/viewer'
 import { resolveLocation, siteLocation, timezoneLocation } from './location'
@@ -8,6 +9,36 @@ const PARIS = { lat: 48.86, lng: 2.35 }
 const JUNE = new Date(Date.UTC(2026, 5, 21))
 
 describe('solar position', () => {
+  test('published solar day ignores the host timezone', () => {
+    const probe = `
+      import { presetInstant, solarClockInstant, solarClockMinutes, sunEvents } from '@pascal-app/viewer'
+      const day = new Date('2026-06-21T00:00:00.000Z')
+      const lat = 48.86
+      const lng = 2.35
+      const noon = solarClockInstant(day, lng, 720)
+      process.stdout.write(JSON.stringify({
+        noon: noon.toISOString(),
+        preset: presetInstant(day, lat, lng, 'midday').toISOString(),
+        minutes: solarClockMinutes(noon, lng),
+        events: sunEvents(day, lat, lng),
+      }))
+    `
+    const inTimezone = (tz: string) => {
+      const child = spawnSync(process.execPath, ['-e', probe], {
+        cwd: process.cwd(),
+        env: { ...process.env, TZ: tz },
+        encoding: 'utf8',
+      })
+      expect(child.status).toBe(0)
+      return JSON.parse(child.stdout)
+    }
+
+    const utc = inTimezone('UTC')
+    expect(inTimezone('Etc/GMT+5')).toEqual(utc)
+    expect(utc.noon).toBe('2026-06-21T11:50:36.000Z')
+    expect(utc.minutes).toBeCloseTo(720, 8)
+  })
+
   test('Paris at the June solstice: high noon sun due south', () => {
     const noon = presetInstant(JUNE, PARIS.lat, PARIS.lng, 'midday')
     const { azimuth, elevation } = solarPosition(noon, PARIS.lat, PARIS.lng)
