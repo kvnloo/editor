@@ -322,6 +322,10 @@ describe('web runtime resolution order', () => {
     const result = await pending
     expect(result).toMatchObject({ installed: true, runtime: { version: '1.2.3' } })
     expect(request.destroyed).toBe(false)
+    expect(network.clock.pendingCount()).toBe(0)
+    network.clock.advance(120_001)
+    expect(request.destroyed).toBe(false)
+    expect(network.clock.pendingCount()).toBe(0)
   })
 
   test('rejects an otherwise valid direct connect after the 60-second cutoff', async () => {
@@ -370,15 +374,28 @@ describe('web runtime resolution order', () => {
     expect(request.destroyed).toBe(false)
     request.emit(
       'response',
-      Object.assign(Readable.from([archive]), {
-        statusCode: 200,
-        headers: { 'content-length': String(archive.length) },
-      }) as unknown as IncomingMessage,
+      Object.assign(
+        Readable.from(
+          (async function* () {
+            yield archive.subarray(0, 1)
+            network.clock.advance(4_999)
+            yield archive.subarray(1)
+          })(),
+        ),
+        {
+          statusCode: 200,
+          headers: { 'content-length': String(archive.length) },
+        },
+      ) as unknown as IncomingMessage,
     )
 
     const result = await pending
     expect(result).toMatchObject({ installed: true, runtime: { version: '1.2.3' } })
     expect(request.destroyed).toBe(false)
+    expect(network.clock.pendingCount()).toBe(0)
+    network.clock.advance(120_001)
+    expect(request.destroyed).toBe(false)
+    expect(network.clock.pendingCount()).toBe(0)
   })
 
   test('starts the shorter inactivity budget only after a late TCP connect', async () => {
@@ -533,6 +550,21 @@ class InMemoryRequest extends EventEmitter {
 
   constructor(private readonly clock: ManualClock) {
     super()
+    this.on('response', (response: IncomingMessage) => {
+      // Subscribe only after the downloader does, or the stream can flow before it is consumed.
+      const monitorData = (event: string | symbol) => {
+        if (event !== 'data') return
+        response.off('newListener', monitorData)
+        response.prependListener('data', () => this.restartInactivity())
+      }
+      const stop = () => {
+        response.off('newListener', monitorData)
+        this.stopInactivity()
+      }
+      response.on('newListener', monitorData)
+      response.once('end', stop)
+      response.once('close', stop)
+    })
   }
 
   setTimeout(timeoutMs: number, callback: () => void): this {
@@ -543,13 +575,20 @@ class InMemoryRequest extends EventEmitter {
 
   attachSocket(socket: EventEmitter & { connecting: boolean }): void {
     this.emit('socket', socket)
-    const startInactivity = () => {
-      if (this.inactivityCallback && this.inactivityTimeoutMs !== null) {
-        this.cancelInactivity = this.clock.schedule(this.inactivityCallback, this.inactivityTimeoutMs)
-      }
+    if (socket.connecting) socket.once('connect', () => this.restartInactivity())
+    else this.restartInactivity()
+  }
+
+  private restartInactivity(): void {
+    this.stopInactivity()
+    if (this.inactivityCallback && this.inactivityTimeoutMs !== null) {
+      this.cancelInactivity = this.clock.schedule(this.inactivityCallback, this.inactivityTimeoutMs)
     }
-    if (socket.connecting) socket.once('connect', startInactivity)
-    else startInactivity()
+  }
+
+  private stopInactivity(): void {
+    this.cancelInactivity?.()
+    this.cancelInactivity = null
   }
 
   end(): this {
@@ -557,7 +596,7 @@ class InMemoryRequest extends EventEmitter {
   }
 
   destroy(error: Error): this {
-    this.cancelInactivity?.()
+    this.stopInactivity()
     this.destroyed = true
     this.emit('error', error)
     return this
@@ -574,6 +613,10 @@ class ManualClock {
     return () => {
       this.deadlines.delete(deadline)
     }
+  }
+
+  pendingCount(): number {
+    return this.deadlines.size
   }
 
   advance(ms: number): void {
