@@ -462,7 +462,15 @@ function createOpfsFixture(moveFailure?: Error) {
   let publicRemovals = 0
   let stageRemovals = 0
   const notFound = () => ({ name: 'NotFoundError' })
-  let previous: Promise<void> = Promise.resolve()
+  const previousByName = new Map<string, Promise<void>>()
+  let stageCreations = 0
+  let secondStageCreated!: () => void
+  const secondStageStarted = new Promise<void>((resolve) => {
+    secondStageCreated = resolve
+  })
+  let destinationLookup:
+    | { filename: string; entered: () => void; gate: Promise<void> }
+    | undefined
   const lockRequests: { signal?: AbortSignal }[] = []
   let secondRequested!: () => void
   const secondLockRequested = new Promise<void>((resolve) => {
@@ -470,19 +478,19 @@ function createOpfsFixture(moveFailure?: Error) {
   })
   const lockManager = {
     request(
-      _name: string,
+      name: string,
       options: { mode: 'exclusive'; signal?: AbortSignal },
       callback: () => Promise<void>,
     ) {
       lockRequests.push({ signal: options.signal })
       if (lockRequests.length === 2) secondRequested()
       let queued = true
-      const pending = previous.then(async () => {
+      const pending = (previousByName.get(name) ?? Promise.resolve()).then(async () => {
         queued = false
         options.signal?.throwIfAborted()
         await callback()
       })
-      previous = pending.then(() => undefined, () => undefined)
+      previousByName.set(name, pending.then(() => undefined, () => undefined))
       if (!options.signal) return pending
       const signal = options.signal
       return new Promise<void>((resolve, reject) => {
@@ -556,6 +564,8 @@ function createOpfsFixture(moveFailure?: Error) {
         } as unknown as FileSystemFileHandle
         stagedEntry.handle = handle
         staged.set(name, stagedEntry)
+        stageCreations++
+        if (stageCreations === 2) secondStageCreated()
       }
       if (!entry) throw notFound()
       return entry.handle
@@ -574,6 +584,12 @@ function createOpfsFixture(moveFailure?: Error) {
       return stagingDirectory
     },
     async getFileHandle(name: string) {
+      if (destinationLookup?.filename === name) {
+        const held = destinationLookup
+        destinationLookup = undefined
+        held.entered()
+        await held.gate
+      }
       const entry = visible.get(name)
       if (!entry) throw notFound()
       return entry.handle
@@ -590,6 +606,19 @@ function createOpfsFixture(moveFailure?: Error) {
     lockManager,
     lockRequests,
     secondLockRequested,
+    secondStageStarted,
+    pauseNextDestinationLookup(filename: string) {
+      let entered!: () => void
+      let release!: () => void
+      const started = new Promise<void>((resolve) => {
+        entered = resolve
+      })
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      destinationLookup = { filename, entered, gate }
+      return { started, release }
+    },
     staged,
     visible,
     events,
@@ -783,6 +812,82 @@ describe('createBrowserDeepZoomZipArtifactHost', () => {
     expect([...filesystem.visible.keys()]).toEqual(['first.zip'])
     expect(filesystem.staged.size).toBe(0)
     expect(await second.getPublished('second.zip')).toBeUndefined()
+  })
+
+  test('serializes competing same-name publications across destination lookup and move', async () => {
+    const filesystem = createOpfsFixture()
+    const first = await createBrowserDeepZoomZipArtifactHost({
+      directory: filesystem.directory,
+      lockManager: filesystem.lockManager,
+      requireStagedFile: true,
+    })
+    const second = await createBrowserDeepZoomZipArtifactHost({
+      directory: filesystem.directory,
+      lockManager: filesystem.lockManager,
+      requireStagedFile: true,
+    })
+    const winningChunks: Uint8Array[] = []
+    const winningHost: DeepZoomZipArtifactHost = {
+      async stage() {
+        const temporary = await first.stage()
+        return {
+          ...temporary,
+          async write(chunk) {
+            winningChunks.push(new Uint8Array(chunk))
+            await temporary.write(chunk)
+          },
+        }
+      },
+    }
+    const lookup = filesystem.pauseNextDestinationLookup('scan.zip')
+    const winningPublish = persistDeepZoomZip(
+      { name: 'scan', ...descriptorOptions },
+      pyramid,
+      winningHost,
+    )
+    await lookup.started
+
+    const challengerTiles = pyramid.map((tile, index) =>
+      index === 0 ? { ...tile, bytes: Uint8Array.of(88) } : tile,
+    )
+    const losingPublish = persistDeepZoomZip(
+      { name: 'scan', ...descriptorOptions },
+      challengerTiles,
+      second,
+    )
+    const losingResult = losingPublish.then(
+      () => ({ status: 'published' as const }),
+      (error: unknown) => ({ status: 'rejected' as const, error }),
+    )
+    try {
+      const competingStage = await Promise.race([
+        filesystem.secondLockRequested.then(() => 'queued' as const),
+        filesystem.secondStageStarted.then(() => 'overlap' as const),
+      ])
+      expect(competingStage).toBe('queued')
+      expect(filesystem.staged.size).toBe(1)
+      expect(filesystem.visible.size).toBe(0)
+    } finally {
+      lookup.release()
+    }
+
+    await winningPublish
+    expect(await losingResult).toMatchObject({
+      status: 'rejected',
+      error: expect.objectContaining({ message: 'ZIP artifact already exists: scan.zip' }),
+    })
+    expect([...filesystem.visible.keys()]).toEqual(['scan.zip'])
+    const published = await first.getPublished('scan.zip')
+    expect(published).toBeDefined()
+    const bytes = new Uint8Array(await published!.arrayBuffer())
+    expect(bytes).toEqual(concatenate(winningChunks))
+    const entries = unzipSync(bytes)
+    expect(entries['scan_files/0/0_0.webp']).toEqual(pyramid[0]!.bytes)
+    expect(entries['scan_files/0/0_0.webp']).not.toEqual(challengerTiles[0]!.bytes)
+    expect(filesystem.events.filter((event) => event === 'move')).toHaveLength(1)
+    expect(filesystem.counts()).toEqual({ publicRemovals: 0, stageRemovals: 1 })
+    expect([...filesystem.staged.keys()].filter((name) => name.endsWith('.part'))).toEqual([])
+    expect(filesystem.staged.size).toBe(0)
   })
 
   test('preserves a lock-less legacy part during recovery', async () => {
