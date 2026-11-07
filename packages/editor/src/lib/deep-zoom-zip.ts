@@ -39,6 +39,14 @@ export async function streamDeepZoomZip(
   const normalizedFormat = format.toLowerCase()
   const descriptor = deepZoomDescriptor({ ...options, format: normalizedFormat })
   const maxLevel = deepZoomMaxLevel(width, height)
+  let expectedTiles = 0n
+  for (let level = 0; level <= maxLevel; level++) {
+    const [levelWidth, levelHeight] = deepZoomLevelSize(width, height, level)
+    const cols = Math.ceil(levelWidth / tileSize)
+    const rows = Math.ceil(levelHeight / tileSize)
+    expectedTiles += BigInt(cols) * BigInt(rows)
+  }
+  const receivedTiles = new Set<string>()
   // fflate does not await its callback; serialize chunks before requesting another entry.
   let drained: Promise<void> = Promise.resolve()
   const zip = new Zip((error, chunk) => {
@@ -86,6 +94,11 @@ export async function streamDeepZoomZip(
       if (!(tile.bytes instanceof Uint8Array)) {
         throw new TypeError('tile bytes must be a Uint8Array')
       }
+      const identity = `${tile.level}/${tile.col}/${tile.row}`
+      if (receivedTiles.has(identity)) {
+        throw new RangeError('duplicate DeepZoom tile coordinates')
+      }
+      receivedTiles.add(identity)
 
       await addEntry(
         name + '_files/' + tile.level + '/' + tile.col + '_' + tile.row + '.' + normalizedFormat,
@@ -94,6 +107,12 @@ export async function streamDeepZoomZip(
     }
 
     checkAbort()
+    // All received coordinates are valid and unique, so equal counts imply full coverage.
+    if (BigInt(receivedTiles.size) !== expectedTiles) {
+      throw new RangeError(
+        `incomplete DeepZoom pyramid: expected ${expectedTiles} tiles, received ${receivedTiles.size}`,
+      )
+    }
     zip.end()
     await drained
     checkAbort()

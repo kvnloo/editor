@@ -143,6 +143,7 @@ describe('streamDeepZoomZip', () => {
       expect(events).toContain('sink:resumed')
       events.push('tile:1')
       yield pyramid[1]!
+      for (const tile of pyramid.slice(2)) yield tile
     }
 
     const write = streamDeepZoomZip(
@@ -170,6 +171,9 @@ describe('streamDeepZoomZip', () => {
       'scan.dzi',
       'scan_files/0/0_0.webp',
       'scan_files/1/0_0.webp',
+      'scan_files/1/1_0.webp',
+      'scan_files/1/0_1.webp',
+      'scan_files/1/1_1.webp',
     ])
   })
 
@@ -249,7 +253,7 @@ describe('streamDeepZoomZip', () => {
     const completedChunks: Uint8Array[] = []
     await streamDeepZoomZip(
       { name: 'scan', ...descriptorOptions },
-      pyramid.slice(0, 1),
+      pyramid,
       (chunk) => {
         completedChunks.push(chunk.slice())
       },
@@ -404,6 +408,33 @@ describe('persistDeepZoomZip', () => {
       const path = 'scan_files/' + tile.level + '/' + tile.col + '_' + tile.row + '.webp'
       expect(entries[path]).toEqual(tile.bytes)
     }
+  })
+
+  test('refuses missing and duplicate tiles before publishing', async () => {
+    const host = await createBrowserDeepZoomZipArtifactHost({ directory: null })
+
+    for (const tiles of [[], pyramid.slice(0, -1)]) {
+      await expect(
+        persistDeepZoomZip({ name: 'scan', ...descriptorOptions }, tiles, host),
+      ).rejects.toThrow('incomplete DeepZoom pyramid')
+      expect(await host.getPublished('scan.zip')).toBeUndefined()
+    }
+
+    await expect(
+      persistDeepZoomZip(
+        { name: 'scan', ...descriptorOptions },
+        [...pyramid, pyramid[0]!],
+        host,
+      ),
+    ).rejects.toThrow('duplicate DeepZoom tile coordinates')
+    expect(await host.getPublished('scan.zip')).toBeUndefined()
+
+    await persistDeepZoomZip({ name: 'scan', ...descriptorOptions }, pyramid, host)
+    const published = await host.getPublished('scan.zip')
+    expect(published).toBeDefined()
+    const entries = unzipSync(new Uint8Array(await published!.arrayBuffer()))
+    expect(Object.keys(entries)).toHaveLength(6)
+    expect(entries['scan_files/1/1_1.webp']).toEqual(pyramid[4]!.bytes)
   })
 
   test('aborts after a staged tile without exposing a partial archive', async () => {
