@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { CliError } from './errors.js'
-import { downloadToFile } from './http-download.js'
+import { type DownloadNetwork, downloadToFile } from './http-download.js'
 import { readJsonFile } from './json-files.js'
 import type { PascalPaths } from './paths.js'
 import {
@@ -48,6 +48,7 @@ export interface EnsureWebRuntimeOptions {
   sourceFile?: string
   /** Overrides the download socket timeout in ms; the downloader defaults to 60s. */
   downloadTimeoutMs?: number
+  downloadNetwork?: DownloadNetwork
   onProgress?: (event: RuntimeProvisionProgress) => void
 }
 
@@ -216,6 +217,7 @@ async function download(
     await downloadToFile(source.url, archiveFile, {
       environment: options.environment ?? process.env,
       timeoutMs: options.downloadTimeoutMs,
+      network: options.downloadNetwork,
       onProgress: ({ received, total }) =>
         options.onProgress?.({
           step: 'runtime-downloading',
