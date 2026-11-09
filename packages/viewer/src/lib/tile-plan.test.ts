@@ -97,6 +97,26 @@ test('one-pixel overlap preserves integral render tiles', () => {
   ])
 })
 
+test('uneven seams keep render sizes and source crops pixel-aligned', () => {
+  const tiles = tileGrid(5, 4, 4, 1)
+  expect(
+    tiles.map(({ x, y, w, h, inner }) => ({
+      render: [x, y, w, h],
+      sourceCrop: [inner.x - x, inner.y - y, inner.w, inner.h],
+      destination: [inner.x, inner.y],
+    })),
+  ).toEqual([
+    { render: [0, 0, 3, 4], sourceCrop: [0, 0, 2, 4], destination: [0, 0] },
+    { render: [1, 0, 3, 4], sourceCrop: [1, 0, 1, 4], destination: [2, 0] },
+    { render: [2, 0, 3, 4], sourceCrop: [1, 0, 2, 4], destination: [3, 0] },
+  ])
+
+  // A half-pixel overlap would put the second render at x=2.5 and crop at x=0.5.
+  expect(() => tileGrid(5, 4, 4, 0.5)).toThrow(
+    'overlap must be a non-negative safe integer with 2 * overlap < passEdge',
+  )
+})
+
 for (const { input, args, reason } of [
   { input: 'zero width', args: [0, 8, 7, 3], reason: 'width' },
   { input: 'negative width', args: [-1, 8, 7, 3], reason: 'width' },

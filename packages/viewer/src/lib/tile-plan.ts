@@ -16,6 +16,13 @@ export type Tile = {
  * `passEdge`, each rendered `overlap` pixels past its inner edges so
  * screen-space passes can sample across seams.
  * One tile when the picture fits a pass.
+ *
+ * All input dimensions and the overlap are whole-pixel counts. A fractional
+ * overlap is not a subpixel sampling radius: for a 5×4 picture, passEdge=4
+ * and overlap=0.5 would put a seam at x=3 with render ranges [0, 3.5]
+ * and [2.5, 5], making the second tile's source crop start at x=0.5.
+ * Capture targets need integral sizes and crop boundaries, so the fraction
+ * is rejected rather than implicitly rounded.
  */
 export function tileGrid(width: number, height: number, passEdge: number, overlap: number): Tile[] {
   for (const [name, value] of [
