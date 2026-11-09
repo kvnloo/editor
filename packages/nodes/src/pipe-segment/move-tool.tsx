@@ -33,6 +33,7 @@ import {
 } from '../shared/ghost-alignment'
 import { type RunMoveConnectivity, startRunMoveConnectivity } from '../shared/run-move-connectivity'
 import { translateWallRun } from '../shared/wall-run-move'
+import { pipeUpdatesPreserveGrades } from './grade-operation'
 
 type Vec3 = [number, number, number]
 
@@ -207,6 +208,19 @@ export const MovePipeSegmentTool: React.FC<{ node: AnyNode }> = ({ node }) => {
       connectivity?.preview({ path: nextPath })
     }
 
+    const finishWithoutCommit = (consumeCancel: boolean) => {
+      connectivity?.clear()
+      if (existedAtStart) {
+        setMeshHidden(false)
+        useViewer.getState().setSelection({ selectedIds: [nodeId] })
+      }
+      useAlignmentGuides.getState().clear()
+      useScene.temporal.getState().resume()
+      if (consumeCancel) markToolCancelConsumed()
+      useEditor.getState().setMovingNodeOrigin('3d')
+      useEditor.getState().setMovingNode(null)
+    }
+
     const commit = (event: GridEvent) => {
       if (committed) return
       if (Date.now() - activatedAtRef.current < 150) {
@@ -217,8 +231,15 @@ export const MovePipeSegmentTool: React.FC<{ node: AnyNode }> = ({ node }) => {
         event.nativeEvent?.stopPropagation?.()
         return
       }
-      committed = true
       const finalPath = previewPathRef.current
+      const gradeUpdates = connectivity?.commitUpdates({ path: finalPath }) ?? []
+      if (!pipeUpdatesPreserveGrades(useScene.getState().nodes, gradeUpdates)) {
+        committed = true
+        finishWithoutCommit(false)
+        event.nativeEvent?.stopPropagation?.()
+        return
+      }
+      committed = true
 
       useScene.temporal.getState().resume()
       let selectId = nodeId
@@ -268,18 +289,7 @@ export const MovePipeSegmentTool: React.FC<{ node: AnyNode }> = ({ node }) => {
       event.nativeEvent?.stopPropagation?.()
     }
 
-    const onCancel = () => {
-      connectivity?.clear()
-      if (existedAtStart) {
-        setMeshHidden(false)
-        useViewer.getState().setSelection({ selectedIds: [nodeId] })
-      }
-      useAlignmentGuides.getState().clear()
-      useScene.temporal.getState().resume()
-      markToolCancelConsumed()
-      useEditor.getState().setMovingNodeOrigin('3d')
-      useEditor.getState().setMovingNode(null)
-    }
+    const onCancel = () => finishWithoutCommit(true)
 
     emitter.on('grid:move', onMove)
     emitter.on('grid:click', commit)
