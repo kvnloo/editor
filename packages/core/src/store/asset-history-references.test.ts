@@ -141,16 +141,20 @@ describe('temporal asset references', () => {
       store.getState().removeSceneMaterial(retained.id)
 
       for (let index = 0; index < 49; index += 1) {
-        store.getState().addSceneMaterial(
-          SceneMaterial.parse({ id: 'mat_fill_' + index, name: 'Fill ' + index, material: {} }),
-        )
+        store
+          .getState()
+          .addSceneMaterial(
+            SceneMaterial.parse({ id: 'mat_fill_' + index, name: 'Fill ' + index, material: {} }),
+          )
       }
       expect(store.temporal.getState().pastStates).toHaveLength(50)
       expect(collectSceneStoreAssetReferences(store)?.has('asset://evicted')).toBe(true)
 
-      store.getState().addSceneMaterial(
-        SceneMaterial.parse({ id: 'mat_fill_49', name: 'Fill 49', material: {} }),
-      )
+      store
+        .getState()
+        .addSceneMaterial(
+          SceneMaterial.parse({ id: 'mat_fill_49', name: 'Fill 49', material: {} }),
+        )
       expect(store.temporal.getState().pastStates).toHaveLength(50)
       expect(collectSceneStoreAssetReferences(store)?.has('asset://evicted')).toBe(false)
     } finally {
@@ -175,9 +179,7 @@ describe('temporal asset references', () => {
       expect(second.getState().materials).toEqual(secondBefore)
 
       firstEnvironment.dispose()
-      expect(() => collectSceneStoreAssetReferences(first)).toThrow(
-        SceneEnvironmentDisposedError,
-      )
+      expect(() => collectSceneStoreAssetReferences(first)).toThrow(SceneEnvironmentDisposedError)
       expect([...collectSceneStoreAssetReferences(second)!]).toEqual(['asset://second'])
     } finally {
       if (!firstEnvironment.disposed) firstEnvironment.dispose()
