@@ -35,6 +35,15 @@ const SIDEBAR_WIDTH_ICON = '3rem'
 const SIDEBAR_KEYBOARD_SHORTCUT = 'b'
 const SIDEBAR_COLLAPSE_THRESHOLD = 220
 const SIDEBAR_MAX_WIDTH = 800
+const CHAT_MIN_WIDTH = 320
+const CHAT_MAX_WIDTH = 600
+const CHAT_DEFAULT_WIDTH = 360
+
+function normalizeChatWidth(width: unknown): number {
+  return typeof width === 'number' && Number.isFinite(width)
+    ? Math.max(CHAT_MIN_WIDTH, Math.min(width, CHAT_MAX_WIDTH))
+    : CHAT_DEFAULT_WIDTH
+}
 
 type SidebarStore = {
   width: number
@@ -66,8 +75,8 @@ export const useSidebarStore = create<SidebarStore>()(
       setIsCollapsed: (collapsed) => set({ isCollapsed: collapsed }),
       isDragging: false,
       setIsDragging: (isDragging) => set({ isDragging }),
-      chatWidth: 360,
-      setChatWidth: (chatWidth) => set({ chatWidth }),
+      chatWidth: CHAT_DEFAULT_WIDTH,
+      setChatWidth: (chatWidth) => set({ chatWidth: normalizeChatWidth(chatWidth) }),
       isMenuHidden: false,
       setIsMenuHidden: (isMenuHidden) => set({ isMenuHidden }),
     }),
@@ -80,6 +89,14 @@ export const useSidebarStore = create<SidebarStore>()(
         chatWidth: state.chatWidth,
         isMenuHidden: state.isMenuHidden,
       }),
+      merge: (persisted, current) => {
+        const stored = persisted as Partial<SidebarStore> | undefined
+        return {
+          ...current,
+          ...stored,
+          chatWidth: normalizeChatWidth(stored?.chatWidth ?? current.chatWidth),
+        }
+      },
       skipHydration: true,
     },
   ),

@@ -22,8 +22,6 @@ import { EditorLayoutMobile } from './editor-layout-mobile'
 import { useSceneSpan } from './views/scene-region'
 import { ViewBarRow } from './views/view-bar'
 
-const CHAT_MIN_WIDTH = 320
-const CHAT_MAX_WIDTH = 600
 // The tool column is narrower at most than the chat can be: the stage stays the widest surface.
 const TOOL_MAX_WIDTH = 520
 
@@ -181,7 +179,7 @@ function ChatColumn({
     (e: React.PointerEvent) => {
       e.preventDefault()
       const left = columnRef.current?.getBoundingClientRect().left ?? 0
-      startResize((x) => setWidth(Math.max(CHAT_MIN_WIDTH, Math.min(x - left, CHAT_MAX_WIDTH))))
+      startResize((x) => setWidth(x - left))
     },
     [setWidth],
   )
