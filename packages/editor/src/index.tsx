@@ -989,6 +989,12 @@ export {
   type ViewerSource,
 } from './lib/viewer-selection'
 export {
+  compareVisualReviewCaptures,
+  type VisualReviewCameraPose,
+  type VisualReviewCapture,
+  type VisualReviewReceipt,
+} from './lib/visual-review-receipt'
+export {
   getWallDrawVariant,
   getWallLineKind,
   INVISIBLE_WALL_DRAFT_THICKNESS,
