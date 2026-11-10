@@ -914,7 +914,7 @@ export {
 export { movementSfxStepKey } from './lib/sfx/movement-tick'
 export { emitDeleteSFX, initSFXBus, triggerSFX } from './lib/sfx-bus'
 export { playSFX, type SFXName, type SFXPlaybackOptions } from './lib/sfx-player'
-export { showSidebarPanel } from './lib/sidebar-panel'
+export { returnToSidebarColumn, showSidebarPanel } from './lib/sidebar-panel'
 export {
   clearSlabSnapFeedback,
   resolveSlabEdgeBandSnap,

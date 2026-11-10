@@ -7,6 +7,7 @@ import { type ReactNode, useCallback, useEffect, useRef } from 'react'
 import { useIsMobile } from '../../hooks/use-mobile'
 import {
   openSidebarPanel,
+  returnToSidebarColumn,
   SIDEBAR_MIN_WIDTH,
   setColumnPanelId,
   setSidebarTabIds,
@@ -55,13 +56,12 @@ function MenuColumn({
   /** The column's own tab (the chat): lit whenever no tool panel takes its place. */
   columnTabId?: string
 }) {
-  const isCollapsed = useSidebarStore((s) => s.isCollapsed)
   const setIsCollapsed = useSidebarStore((s) => s.setIsCollapsed)
   const activePanel = useShownSidebarPanel(tabs)
   const setActivePanel = useEditor((s) => s.setActiveSidebarPanel)
   const setIsMenuHidden = useSidebarStore((s) => s.setIsMenuHidden)
 
-  // Publish the menu's tabs so keyboard shortcuts (B, P) can open a panel.
+  // Keep shortcut targets published even while the menu itself is hidden.
   useEffect(() => {
     setSidebarTabIds(tabs.map((tab) => tab.id))
     return () => setSidebarTabIds([])
@@ -99,14 +99,14 @@ function MenuColumn({
     [],
   )
 
-  // Closing the tool panel disarms any build tool back to select
+  // A closed tool column (including a return to chat) must not leave build armed.
   useEffect(() => {
-    if (!isCollapsed) return
+    if (!toolClosed) return
     const { mode, setMode } = useEditor.getState()
     if (mode === 'build') {
       setMode('select')
     }
-  }, [isCollapsed])
+  }, [toolClosed])
 
   // Menu click: open a closed panel (at a usable width), close it when
   // re-clicking the open entry, otherwise switch panels.
@@ -121,8 +121,8 @@ function MenuColumn({
         return
       }
       if (id === columnTabId) {
-        // The column shows its tab once no tool panel is open in its place.
-        setActivePanel(id)
+        // The column replaces the tool and drops any armed build action.
+        returnToSidebarColumn(id)
         return
       }
       if (toolClosed) {
@@ -528,13 +528,15 @@ export function EditorLayoutV2({
 
       {/* Main content: side menu, the chat or the open tool, work area */}
       <div className="flex min-h-0 flex-1">
-        {showSideColumns && !isMenuHidden && (
-          <MenuColumn
-            columnTabId={columnTab?.id}
-            toolClosed={toolClosed}
-            footer={sideMenuFooter}
-            tabs={sidebarTabs}
-          />
+        {showSideColumns && (
+          <div hidden={isMenuHidden}>
+            <MenuColumn
+              columnTabId={columnTab?.id}
+              toolClosed={toolClosed}
+              footer={sideMenuFooter}
+              tabs={sidebarTabs}
+            />
+          </div>
         )}
         {showSideColumns && columnTab && (
           <ChatColumn hidden={tool !== undefined} overlay={sidebarOverlay} tabId={columnTab.id}>

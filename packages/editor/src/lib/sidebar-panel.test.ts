@@ -1,6 +1,5 @@
+import { returnToSidebarColumn, useEditor, useSidebarStore } from '@pascal-app/editor'
 import { afterEach, describe, expect, test } from 'bun:test'
-import { useSidebarStore } from '../components/ui/primitives/sidebar'
-import useEditor from '../store/use-editor'
 import {
   openSidebarPanel,
   SIDEBAR_MIN_WIDTH,
@@ -51,5 +50,38 @@ describe('showing the chat when it has a column', () => {
     expect(useEditor.getState().activeSidebarPanel).toBe('ai')
     expect(useSidebarStore.getState().isCollapsed).toBe(false)
     expect(useSidebarStore.getState().width).toBe(SIDEBAR_MIN_WIDTH)
+  })
+})
+
+
+describe('returning to the chat column', () => {
+  afterEach(() => {
+    useEditor.getState().setMode('select')
+    useSidebarStore.setState({ isCollapsed: false, isMenuHidden: false })
+  })
+
+  test('closes the tool panel and disarms an active build tool', () => {
+    useEditor.getState().armToolMode({ mode: 'build', tool: 'wall' })
+    useEditor.getState().setActiveSidebarPanel('build')
+    useSidebarStore.setState({ isCollapsed: false, isMenuHidden: false })
+
+    returnToSidebarColumn('ai')
+
+    expect(useEditor.getState().activeSidebarPanel).toBe('ai')
+    expect(useSidebarStore.getState().isCollapsed).toBe(true)
+    expect(useEditor.getState().mode).toBe('select')
+  })
+
+  test('keeps the menu hidden while disarming the tool on chat return', () => {
+    useEditor.getState().armToolMode({ mode: 'build', tool: 'wall' })
+    useEditor.getState().setActiveSidebarPanel('build')
+    useSidebarStore.setState({ isCollapsed: false, isMenuHidden: true })
+
+    returnToSidebarColumn('ai')
+
+    expect(useEditor.getState().activeSidebarPanel).toBe('ai')
+    expect(useSidebarStore.getState().isCollapsed).toBe(true)
+    expect(useSidebarStore.getState().isMenuHidden).toBe(true)
+    expect(useEditor.getState().mode).toBe('select')
   })
 })

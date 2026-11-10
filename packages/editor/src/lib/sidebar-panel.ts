@@ -39,6 +39,17 @@ export function showSidebarPanel(id: string): void {
 }
 
 /**
+ * Return to the column tab instead of leaving an invisible build tool armed.
+ * The menu may be visually hidden; its state is not the owner of this action.
+ */
+export function returnToSidebarColumn(id: string): void {
+  useEditor.getState().setActiveSidebarPanel(id)
+  useSidebarStore.getState().setIsCollapsed(true)
+  const { mode, setMode } = useEditor.getState()
+  if (mode === 'build') setMode('select')
+}
+
+/**
  * Show the first of `preferred` the host provides (`showSidebarPanel`).
  * Returns the panel shown, or null when the host has none of them (e.g. on
  * mobile).
