@@ -49,6 +49,7 @@ If the task is a furniture or clearance assessment and the `furniture-fit` skill
 - Room scan on the hosted server only: reach it with `list_captures`, then `get_capture`, then `open_capture_as_project` for a `processed` scan you have edit access to on the scan's own project; these tools do not exist on the local CLI, so never call them there.
 - New persistent project: call `create_project` before modeling.
 - Already active scene: call `get_project_status` and `get_scene` before editing.
+- For a scan node with a `captureSession`, use `get_capture_evidence` when available to inspect per-stream artifact presence and SHA-256 checks. A matching hash does not authenticate a producer; unknown is not pass.
 - If persistence tools are absent, explain that the connected server is an in-memory/custom runtime and do not promise a durable handoff.
 
 Record the active project ID, scene ID or version, and graph hash when returned. Re-read after a version conflict rather than overwriting newer work.
