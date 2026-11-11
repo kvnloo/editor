@@ -1,3 +1,25 @@
+export type OpeningFrameState = {
+  sceneReadyKey: number
+  phase: 'waiting' | 'framing' | 'done'
+}
+
+/** Each successful scene load gets its own opening fit, even with persistent orbit controls. */
+export function planOpeningFrame(
+  previous: OpeningFrameState,
+  sceneReadyKey: number,
+  ready: boolean,
+): { state: OpeningFrameState; start: boolean } {
+  const state: OpeningFrameState =
+    previous.sceneReadyKey === sceneReadyKey ? previous : { sceneReadyKey, phase: 'waiting' }
+  if (!ready || state.phase !== 'waiting') return { state, start: false }
+  return { state: { sceneReadyKey, phase: 'framing' }, start: true }
+}
+
+/** Effect teardown (including StrictMode) cancels the follow, not the next attempt. */
+export function releaseOpeningFrame(state: OpeningFrameState): OpeningFrameState {
+  return state.phase === 'framing' ? { ...state, phase: 'waiting' } : state
+}
+
 export type FitSceneBounds = {
   center: [number, number]
   size: [number, number]

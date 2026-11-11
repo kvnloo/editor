@@ -35,6 +35,15 @@ const SIDEBAR_WIDTH_ICON = '3rem'
 const SIDEBAR_KEYBOARD_SHORTCUT = 'b'
 const SIDEBAR_COLLAPSE_THRESHOLD = 220
 const SIDEBAR_MAX_WIDTH = 800
+const CHAT_MIN_WIDTH = 320
+const CHAT_MAX_WIDTH = 600
+const CHAT_DEFAULT_WIDTH = 360
+
+function normalizeChatWidth(width: unknown): number {
+  return typeof width === 'number' && Number.isFinite(width)
+    ? Math.max(CHAT_MIN_WIDTH, Math.min(width, CHAT_MAX_WIDTH))
+    : CHAT_DEFAULT_WIDTH
+}
 
 type SidebarStore = {
   width: number
@@ -43,6 +52,12 @@ type SidebarStore = {
   setIsCollapsed: (collapsed: boolean) => void
   isDragging: boolean
   setIsDragging: (isDragging: boolean) => void
+  /** Width of the v2 layout's chat column. */
+  chatWidth: number
+  setChatWidth: (width: number) => void
+  /** The v2 layout's side menu is hidden, leaving a Menu button above the stage. */
+  isMenuHidden: boolean
+  setIsMenuHidden: (hidden: boolean) => void
 }
 
 export const useSidebarStore = create<SidebarStore>()(
@@ -60,11 +75,28 @@ export const useSidebarStore = create<SidebarStore>()(
       setIsCollapsed: (collapsed) => set({ isCollapsed: collapsed }),
       isDragging: false,
       setIsDragging: (isDragging) => set({ isDragging }),
+      chatWidth: CHAT_DEFAULT_WIDTH,
+      setChatWidth: (chatWidth) => set({ chatWidth: normalizeChatWidth(chatWidth) }),
+      isMenuHidden: false,
+      setIsMenuHidden: (isMenuHidden) => set({ isMenuHidden }),
     }),
     {
       name: 'sidebar-preferences',
       storage: hydrationGatedStorage((): boolean => useSidebarStore.persist.hasHydrated()),
-      partialize: (state) => ({ width: state.width, isCollapsed: state.isCollapsed }),
+      partialize: (state) => ({
+        width: state.width,
+        isCollapsed: state.isCollapsed,
+        chatWidth: state.chatWidth,
+        isMenuHidden: state.isMenuHidden,
+      }),
+      merge: (persisted, current) => {
+        const stored = persisted as Partial<SidebarStore> | undefined
+        return {
+          ...current,
+          ...stored,
+          chatWidth: normalizeChatWidth(stored?.chatWidth ?? current.chatWidth),
+        }
+      },
       skipHydration: true,
     },
   ),

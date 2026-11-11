@@ -1,3 +1,8 @@
+import {
+  type OpeningFrameState,
+  planOpeningFrame,
+  releaseOpeningFrame,
+} from '@pascal-app/editor'
 import { describe, expect, test } from 'bun:test'
 import { CameraControlsImpl } from '@react-three/drei'
 import * as THREE from 'three'
@@ -248,6 +253,43 @@ describe('fit-scene framing', () => {
         pending: { bounds: sampleBounds },
       }),
     ).toEqual({ action: 'noop' })
+  })
+})
+
+describe('opening scene framing', () => {
+  test('frames a second project and a reopened project without overriding a user pose', () => {
+    const first = planOpeningFrame({ sceneReadyKey: 7, phase: 'waiting' }, 7, true)
+    expect(first).toEqual({
+      state: { sceneReadyKey: 7, phase: 'framing' },
+      start: true,
+    })
+
+    // React StrictMode cleanup must not consume the initial fit.
+    const retry = planOpeningFrame(releaseOpeningFrame(first.state), 7, true)
+    expect(retry.start).toBe(true)
+    expect(planOpeningFrame(retry.state, 7, true).start).toBe(false)
+
+    // A local camera move cancels further automatic fits within this load.
+    const moved: OpeningFrameState = { ...retry.state, phase: 'done' }
+    expect(planOpeningFrame(moved, 7, true).start).toBe(false)
+
+    // The second project must wait for readiness, then get its own fit.
+    const loading = planOpeningFrame(moved, 8, false)
+    expect(loading).toEqual({
+      state: { sceneReadyKey: 8, phase: 'waiting' },
+      start: false,
+    })
+    const second = planOpeningFrame(loading.state, 8, true)
+    expect(second).toEqual({
+      state: { sceneReadyKey: 8, phase: 'framing' },
+      start: true,
+    })
+
+    // Reloading that project creates another successful scene-ready key.
+    expect(planOpeningFrame({ ...second.state, phase: 'done' }, 9, true)).toEqual({
+      state: { sceneReadyKey: 9, phase: 'framing' },
+      start: true,
+    })
   })
 })
 

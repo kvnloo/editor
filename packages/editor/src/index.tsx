@@ -112,6 +112,11 @@ export { BakeThumbnail, prepareBakeThumbnailLook } from './components/editor/bak
 export { ConstructionRevealAudio } from './components/editor/construction-reveal-audio'
 export { copyCollectionIds, duplicateNodeAndPickUp } from './components/editor/duplicate-node'
 export { FirstPersonControls } from './components/editor/first-person-controls'
+export {
+  type OpeningFrameState,
+  planOpeningFrame,
+  releaseOpeningFrame,
+} from './components/editor/fit-scene-framing'
 export { FloatingActionMenu as FloatingMenu } from './components/editor/floating-action-menu'
 // Embed surface — the editor's real in-canvas affordances, so a host can mount
 // authentic selection handles, interactive build tools, and the mover on top
@@ -914,7 +919,7 @@ export {
 export { movementSfxStepKey } from './lib/sfx/movement-tick'
 export { emitDeleteSFX, initSFXBus, triggerSFX } from './lib/sfx-bus'
 export { playSFX, type SFXName, type SFXPlaybackOptions } from './lib/sfx-player'
-export { showSidebarPanel } from './lib/sidebar-panel'
+export { returnToSidebarColumn, showSidebarPanel } from './lib/sidebar-panel'
 export {
   clearSlabSnapFeedback,
   resolveSlabEdgeBandSnap,

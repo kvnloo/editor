@@ -77,16 +77,53 @@ import { visibleScene } from '../../store/view-layout'
 import { createCameraDraggingLifecycle } from './camera-dragging-lifecycle'
 import {
   type FitSceneLookAt,
+  type OpeningFrameState,
   type PendingFitScene,
   planFitSceneOnEvent,
   planFitSceneOnOrbitResume,
   planLevelFollow,
+  planOpeningFrame,
+  releaseOpeningFrame,
 } from './fit-scene-framing'
 import { FloorAwareCameraControls } from './floor-aware-camera-controls'
 import { FloorSurface } from './floor-surface'
 
 const currentTarget = new Vector3()
 const tempBox = new Box3()
+const OPENING_FRAME_FOLLOW_MS = [1500, 4000] as const
+const OPENING_FRAME_MIN_RADIUS = 8
+const openingSphere = new Sphere()
+
+/** A view saved on a node (`node.camera`), when it is complete. */
+function savedView(
+  node: AnyNode,
+): { position: [number, number, number]; target: [number, number, number] } | null {
+  const position = node.camera?.position
+  const target = node.camera?.target
+  if (!(position && target) || position.length < 3 || target.length < 3) return null
+  const values = [...position.slice(0, 3), ...target.slice(0, 3)]
+  if (!values.every((v) => typeof v === 'number' && Number.isFinite(v))) return null
+  return {
+    position: [position[0], position[1], position[2]] as [number, number, number],
+    target: [target[0], target[1], target[2]] as [number, number, number],
+  }
+}
+
+/** What a project holds on screen: its buildings and scans, as drawn. Null when nothing is. */
+function openingBounds(nodes: readonly AnyNode[]): Box3 | null {
+  const bounds = new Box3()
+  for (const node of nodes) {
+    if (node.type !== 'building' && node.type !== 'scan') continue
+    const object = sceneRegistry.nodes.get(node.id)
+    if (object) bounds.expandByObject(object)
+  }
+  return bounds.isEmpty() ? null : bounds
+}
+
+/** Within half a metre at every corner: a re-check that found nothing new. */
+function boundsClose(a: Box3, b: Box3): boolean {
+  return a.min.distanceTo(b.min) < 0.5 && a.max.distanceTo(b.max) < 0.5
+}
 const tempCenter = new Vector3()
 const tempDelta = new Vector3()
 const tempPosition = new Vector3()
@@ -399,8 +436,20 @@ function useFirstPersonCameraPoseRestore(
   return useCallback(() => isRestoring.current, [])
 }
 
-export const CustomCameraControls = ({ paused = false }: { paused?: boolean }) => {
+export const CustomCameraControls = ({
+  paused = false,
+  sceneReady = true,
+  sceneReadyKey = 0,
+}: {
+  paused?: boolean
+  /** False while the project is still opening; the first framing waits for it. */
+  sceneReady?: boolean
+  /** Incremented for each successful scene load, including reopens and retries. */
+  sceneReadyKey?: number
+}) => {
   const controls = useRef<FloorAwareCameraControls | null>(null)
+  // Whether the opening framing may still move the camera: not once anything else has.
+  const openingFrame = useRef<OpeningFrameState>({ sceneReadyKey, phase: 'waiting' })
   const pendingAppliedPose = useRef<CameraPoseApplicationPlan | null>(null)
   const activePoseInterpolation = useRef<{
     camera: Camera
@@ -502,6 +551,7 @@ export const CustomCameraControls = ({ paused = false }: { paused?: boolean }) =
   const beginLocalCameraInteraction = useCallback(
     ({ dragging = true }: { dragging?: boolean } = {}) => {
       cancelPoseApplication()
+      openingFrame.current.phase = 'done'
       if (dragging) {
         controls.current?.releaseWrittenPose()
         cameraDraggingLifecycle.begin()
@@ -575,6 +625,7 @@ export const CustomCameraControls = ({ paused = false }: { paused?: boolean }) =
   useEffect(() => {
     const handleAppliedPose = (pose: CameraPose) => {
       if (isFirstPersonMode) return
+      openingFrame.current.phase = 'done'
 
       const plan = planCameraPoseApplication(pose)
       if (!plan) return
@@ -713,6 +764,50 @@ export const CustomCameraControls = ({ paused = false }: { paused?: boolean }) =
     isFirstPersonMode,
     isRestoringFirstPersonPose,
   ])
+
+  // The first pose is a fixed one about 20 m out, which a big project (a scanned house tens of
+  // metres across) fills from the roof. Once the project is open, frame what it holds instead,
+  // unless the camera already has somewhere to be: a view saved on the site or a building, a pose
+  // applied to it, or the person moving it. Scans and models finish streaming in after the scene
+  // reports ready, so the frame follows them for a few seconds while nothing else has moved it.
+  useEffect(() => {
+    const { state, start } = planOpeningFrame(
+      openingFrame.current,
+      sceneReadyKey,
+      sceneReady && !isPreviewMode && !isFirstPersonMode,
+    )
+    openingFrame.current = state
+    if (!start) return
+    let framed: Box3 | null = null
+    const frame = () => {
+      const control = controls.current
+      if (openingFrame.current.phase !== 'framing' || !control) return
+      const nodes = Object.values(useScene.getState().nodes)
+      const saved = nodes.find(
+        (node) => (node.type === 'site' || node.type === 'building') && savedView(node),
+      )
+      const view = saved ? savedView(saved) : null
+      if (view) {
+        openingFrame.current.phase = 'done'
+        control.setLookAt(...view.position, ...view.target, true)
+        return
+      }
+      const bounds = openingBounds(nodes)
+      if (!bounds || (framed && boundsClose(framed, bounds))) return
+      framed = bounds
+      // A sphere keeps the opening's angle (a box fit turns square to it), and a floor of
+      // a few metres keeps a single wall from filling the view.
+      bounds.getBoundingSphere(openingSphere)
+      openingSphere.radius = Math.max(openingSphere.radius, OPENING_FRAME_MIN_RADIUS)
+      void control.fitToSphere(openingSphere, true)
+    }
+    frame()
+    const timers = OPENING_FRAME_FOLLOW_MS.map((ms) => window.setTimeout(frame, ms))
+    return () => {
+      for (const timer of timers) window.clearTimeout(timer)
+      openingFrame.current = releaseOpeningFrame(openingFrame.current)
+    }
+  }, [sceneReady, sceneReadyKey, isPreviewMode, isFirstPersonMode])
 
   useEffect(() => {
     if (isFirstPersonMode || !controls.current) return
