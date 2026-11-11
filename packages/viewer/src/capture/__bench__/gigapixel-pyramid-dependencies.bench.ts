@@ -6,10 +6,10 @@ const tileSize = 512
 const overlap = 1
 const results: Record<string, unknown>[] = []
 
-for (const [width, height] of [
-  [32_768, 18_432],
-  [65_536, 36_864],
-  [131_072, 73_728],
+for (const { width, height } of [
+  { width: 32_768, height: 18_432 },
+  { width: 65_536, height: 36_864 },
+  { width: 131_072, height: 73_728 },
 ]) {
   const samples: number[] = []
   let topParents = 0
