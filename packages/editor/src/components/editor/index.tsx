@@ -933,6 +933,7 @@ function SnapAwareGrid() {
 const ViewerSceneContent = memo(function ViewerSceneContent({
   isVersionPreviewMode,
   isLoading,
+  sceneReadyKey,
   isFirstPersonMode,
   isXRMode,
   isStudioMode,
@@ -942,6 +943,7 @@ const ViewerSceneContent = memo(function ViewerSceneContent({
 }: {
   isVersionPreviewMode: boolean
   isLoading: boolean
+  sceneReadyKey: number
   isFirstPersonMode: boolean
   isXRMode: boolean
   isStudioMode: boolean
@@ -987,7 +989,7 @@ const ViewerSceneContent = memo(function ViewerSceneContent({
       {!(isLoading || noEditing) && <ToolManager />}
       {isFirstPersonMode && <FirstPersonControls />}
       {isCaptureMode && !isXRMode && <CaptureCameraRig />}
-      {!isXRMode && <CustomCameraControls sceneReady={!isLoading} />}
+      {!isXRMode && <CustomCameraControls sceneReady={!isLoading} sceneReadyKey={sceneReadyKey} />}
       {!isXRMode && <FollowPascal />}
       {!isXRMode && <ThumbnailGenerator onThumbnailCapture={onThumbnailCapture} />}
       {!isXRMode && <VectorEdgeExtractor />}
@@ -1391,6 +1393,7 @@ const ViewerCanvas = memo(function ViewerCanvas({
                 <ViewerSceneContent
                   isFirstPersonMode={isFirstPersonMode}
                   isLoading={showLoader}
+                  sceneReadyKey={sceneReadyKey}
                   isXRMode={immersive != null}
                   isStudioMode={isStudioMode}
                   isVersionPreviewMode={isVersionPreviewMode}

@@ -77,10 +77,13 @@ import { visibleScene } from '../../store/view-layout'
 import { createCameraDraggingLifecycle } from './camera-dragging-lifecycle'
 import {
   type FitSceneLookAt,
+  type OpeningFrameState,
   type PendingFitScene,
   planFitSceneOnEvent,
   planFitSceneOnOrbitResume,
   planLevelFollow,
+  planOpeningFrame,
+  releaseOpeningFrame,
 } from './fit-scene-framing'
 import { FloorAwareCameraControls } from './floor-aware-camera-controls'
 import { FloorSurface } from './floor-surface'
@@ -436,14 +439,17 @@ function useFirstPersonCameraPoseRestore(
 export const CustomCameraControls = ({
   paused = false,
   sceneReady = true,
+  sceneReadyKey = 0,
 }: {
   paused?: boolean
   /** False while the project is still opening; the first framing waits for it. */
   sceneReady?: boolean
+  /** Incremented for each successful scene load, including reopens and retries. */
+  sceneReadyKey?: number
 }) => {
   const controls = useRef<FloorAwareCameraControls | null>(null)
   // Whether the opening framing may still move the camera: not once anything else has.
-  const openingFrame = useRef<'waiting' | 'framing' | 'done'>('waiting')
+  const openingFrame = useRef<OpeningFrameState>({ sceneReadyKey, phase: 'waiting' })
   const pendingAppliedPose = useRef<CameraPoseApplicationPlan | null>(null)
   const activePoseInterpolation = useRef<{
     camera: Camera
@@ -545,7 +551,7 @@ export const CustomCameraControls = ({
   const beginLocalCameraInteraction = useCallback(
     ({ dragging = true }: { dragging?: boolean } = {}) => {
       cancelPoseApplication()
-      openingFrame.current = 'done'
+      openingFrame.current.phase = 'done'
       if (dragging) {
         controls.current?.releaseWrittenPose()
         cameraDraggingLifecycle.begin()
@@ -619,7 +625,7 @@ export const CustomCameraControls = ({
   useEffect(() => {
     const handleAppliedPose = (pose: CameraPose) => {
       if (isFirstPersonMode) return
-      openingFrame.current = 'done'
+      openingFrame.current.phase = 'done'
 
       const plan = planCameraPoseApplication(pose)
       if (!plan) return
@@ -765,20 +771,24 @@ export const CustomCameraControls = ({
   // applied to it, or the person moving it. Scans and models finish streaming in after the scene
   // reports ready, so the frame follows them for a few seconds while nothing else has moved it.
   useEffect(() => {
-    if (!sceneReady || isPreviewMode || isFirstPersonMode) return
-    if (openingFrame.current !== 'waiting') return
-    openingFrame.current = 'framing'
+    const { state, start } = planOpeningFrame(
+      openingFrame.current,
+      sceneReadyKey,
+      sceneReady && !isPreviewMode && !isFirstPersonMode,
+    )
+    openingFrame.current = state
+    if (!start) return
     let framed: Box3 | null = null
     const frame = () => {
       const control = controls.current
-      if (openingFrame.current !== 'framing' || !control) return
+      if (openingFrame.current.phase !== 'framing' || !control) return
       const nodes = Object.values(useScene.getState().nodes)
       const saved = nodes.find(
         (node) => (node.type === 'site' || node.type === 'building') && savedView(node),
       )
       const view = saved ? savedView(saved) : null
       if (view) {
-        openingFrame.current = 'done'
+        openingFrame.current.phase = 'done'
         control.setLookAt(...view.position, ...view.target, true)
         return
       }
@@ -795,9 +805,9 @@ export const CustomCameraControls = ({
     const timers = OPENING_FRAME_FOLLOW_MS.map((ms) => window.setTimeout(frame, ms))
     return () => {
       for (const timer of timers) window.clearTimeout(timer)
-      if (openingFrame.current === 'framing') openingFrame.current = 'done'
+      openingFrame.current = releaseOpeningFrame(openingFrame.current)
     }
-  }, [sceneReady, isPreviewMode, isFirstPersonMode])
+  }, [sceneReady, sceneReadyKey, isPreviewMode, isFirstPersonMode])
 
   useEffect(() => {
     if (isFirstPersonMode || !controls.current) return
