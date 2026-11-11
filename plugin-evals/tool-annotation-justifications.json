@@ -436,6 +436,19 @@
       }
     },
     {
+      "name": "export_gigapixel",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "openWorldHint": false
+      },
+      "justifications": {
+        "readOnlyHint": "The host captures rendered tiles and publishes a project-bound DeepZoom ZIP artifact; this writes an output file.",
+        "destructiveHint": "The host creates a fresh ZIP artifact in a granted destination; it must not replace or remove existing project files.",
+        "openWorldHint": "The editor captures its own project and writes only the host-approved destination, without contacting the public internet."
+      }
+    },
+    {
       "name": "export_glb",
       "annotations": {
         "readOnlyHint": true,

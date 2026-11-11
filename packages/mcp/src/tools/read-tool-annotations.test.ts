@@ -85,6 +85,7 @@ const TOOL_POLICIES = [
       'cut_floor_opening',
       'duplicate_level',
       'duplicate_node',
+      'export_gigapixel',
       'furnish_room',
       'place_in_room',
       'generate_variants',

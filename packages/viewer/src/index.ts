@@ -320,6 +320,7 @@ export {
   buildTerrainPerimeterFillGeometry,
   type TerrainPerimeterPoint,
 } from './lib/terrain-perimeter-fill'
+export { tileGrid, type Tile } from './lib/tile-plan'
 export {
   getPascalTextureRef,
   type PascalTextureColorSpace,

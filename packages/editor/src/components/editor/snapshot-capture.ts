@@ -32,7 +32,7 @@ export function enqueueSnapshotCapture(
   enqueue: ReturnType<typeof createSnapshotQueue>,
   version: { current: number },
   event: ThumbnailGenerateEvent,
-  capture: (event: ThumbnailGenerateEvent) => Promise<void>,
+  capture: (event: ThumbnailGenerateEvent) => Promise<unknown>,
   reportFailure: (failure: SnapshotCaptureFailedEvent) => void,
 ) {
   const requestedVersion = version.current
@@ -121,8 +121,10 @@ export async function runSnapshotCapture(
   busy: { current: boolean },
   capture: () => Promise<void>,
   reportFailure: (failure: SnapshotCaptureFailedEvent) => void,
+  propagateFailure = false,
 ) {
   if (busy.current) {
+    if (propagateFailure) throw new Error('Another snapshot is being captured. Try again.')
     if (requestId)
       reportFailure({ requestId, error: 'Another snapshot is being captured. Try again.' })
     return
@@ -132,6 +134,7 @@ export async function runSnapshotCapture(
   try {
     await capture()
   } catch (error) {
+    if (propagateFailure) throw error
     if (requestId) {
       reportFailure({
         requestId,

@@ -8,7 +8,33 @@ export {
   type CaptureStreamRenderer,
   type CaptureStreamRendererProps,
 } from './capture-runtime'
+export {
+  deepZoomDescriptor,
+  deepZoomLevelSize,
+  deepZoomMaxLevel,
+  deepZoomTiles,
+  type DeepZoomDescriptorOptions,
+  type DeepZoomTile,
+} from './deep-zoom'
+export {
+  deepZoomTilesUrl,
+  deepZoomTileUrl,
+  parseDeepZoomDescriptor,
+  type ParsedDeepZoomDescriptor,
+} from './deep-zoom-source'
+export {
+  type GigapixelCaptureFragment,
+  type GigapixelCaptureOptions,
+  type GigapixelCapturePass,
+  type GigapixelCapturePlan,
+  type GigapixelPyramidDependencyLevel,
+  type GigapixelPyramidParent,
+  type GigapixelPyramidPlan,
+  planGigapixelCapture,
+  planGigapixelPyramid,
+} from './gigapixel-capture-plan'
 export { resolveCaptureFrameMatrix } from './frame'
+export { halveRgba } from './halve-rgba'
 export {
   isCaptureLayerVisible,
   isCaptureSessionVisible,

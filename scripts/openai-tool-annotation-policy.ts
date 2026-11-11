@@ -54,6 +54,7 @@ export const EXPECTED_OPENAI_TOOL_ANNOTATIONS = {
   duplicate_level: policy(false, false, false),
   duplicate_node: policy(false, false, false),
   duplicate_zone: policy(false, true, false),
+  export_gigapixel: policy(false, false, false),
   export_glb: policy(true, false, false),
   export_json: policy(true, false, false),
   furnish_room: policy(false, false, false),

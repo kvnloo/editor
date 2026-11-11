@@ -14,6 +14,7 @@ import { placeDesignTool, validateDesignTool } from './designs'
 import { addFenceTool } from './fences'
 import { findByTypeTool } from './find-by-type'
 import { furnishRoomTool } from './furnish-room'
+import { exportGigapixelTool } from './gigapixel-export'
 import {
   addLevelTool,
   duplicateLevelTool,
@@ -53,6 +54,7 @@ export * from './create-room'
 export * from './fences'
 export * from './find-by-type'
 export * from './furnish-room'
+export * from './gigapixel-export'
 export * from './hosted-services'
 export * from './levels'
 export * from './measurement'
@@ -89,6 +91,7 @@ export const AGENT_TOOL_CONTRACTS = [
   measureStairTool,
   fitStairTool,
   viewSceneTool,
+  exportGigapixelTool,
   addDoorTool,
   addWindowTool,
   listLevelsTool,

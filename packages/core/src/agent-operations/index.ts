@@ -67,6 +67,8 @@ export * from './duplicate-node'
 export * from './find-by-type'
 export * from './furnish-room'
 export * from './get-node'
+export * from './gigapixel-export'
+export * from './gigapixel-export-authority'
 export * from './hosted-services'
 export * from './layout-clearance'
 // The door check that reads an item's real shape, not the plain one of door-clearance.
