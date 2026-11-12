@@ -1,5 +1,5 @@
 import { type Tile, tileGrid } from '../lib/tile-plan'
-import { deepZoomLevelSize, deepZoomMaxLevel, deepZoomTiles, type DeepZoomTile } from './deep-zoom'
+import { type DeepZoomTile, deepZoomLevelSize, deepZoomMaxLevel, deepZoomTiles } from './deep-zoom'
 
 export interface GigapixelCaptureOptions {
   width: number
@@ -34,9 +34,9 @@ export interface GigapixelCapturePlan {
   /** Shared pyramid geometry and adjacency for budget replay and streaming. */
   pyramid: GigapixelPyramidPlan
   /**
-   * Conservative high-water RGBA pixel count: readback, all copied fragments
-   * (including ready tiles), completed tiles, resident pyramid children, and
-   * parent assembly/downsample buffers. Excludes encoder and ZIP output bytes.
+   * High-water tracked RGBA pixels: readback, unfinished fragments, completed
+   * tiles, resident pyramid children, and parent assembly/downsample buffers.
+   * Excludes encoder and ZIP output bytes and garbage-collector timing.
    */
   peakResidentPixels: number
 }
@@ -196,25 +196,23 @@ function peakResidentPixelsForPlan(
 
   for (const pass of passes) {
     const readbackPixels = pass.render.w * pass.render.h
+    const ready = new Map(pass.emittedTiles.map((tile) => [tileKey(tile.col, tile.row), tile]))
     allocate(readbackPixels)
     for (const fragment of pass.fragments) {
       const id = tileKey(fragment.col, fragment.row)
-      const pixels = fragment.w * fragment.h
-      allocate(pixels)
-      incompleteCopies.set(id, (incompleteCopies.get(id) ?? 0) + pixels)
+      const tile = ready.get(id)
+      if (tile) {
+        allocate(tile.w * tile.h)
+        release(incompleteCopies.get(id) ?? 0)
+        incompleteCopies.delete(id)
+        emit(maxLevel, tile)
+      } else {
+        const pixels = fragment.w * fragment.h
+        allocate(pixels)
+        incompleteCopies.set(id, (incompleteCopies.get(id) ?? 0) + pixels)
+      }
     }
     release(readbackPixels)
-    for (const tile of pass.emittedTiles) {
-      const id = tileKey(tile.col, tile.row)
-      const copiedPixels = incompleteCopies.get(id)
-      if (copiedPixels === undefined) {
-        throw new Error('Completed DeepZoom tile has no fragments')
-      }
-      allocate(tile.w * tile.h)
-      emit(maxLevel, tile)
-      release(copiedPixels)
-      incompleteCopies.delete(id)
-    }
   }
   if (incompleteCopies.size !== 0 || livePixels !== 0) {
     throw new Error('Capture budget left resident pixels unaccounted')
@@ -222,10 +220,7 @@ function peakResidentPixelsForPlan(
   return peakPixels
 }
 
-function fragmentWithin(
-  inner: Tile['inner'],
-  dzi: DeepZoomTile,
-): GigapixelCaptureFragment | null {
+function fragmentWithin(inner: Tile['inner'], dzi: DeepZoomTile): GigapixelCaptureFragment | null {
   const x = Math.max(inner.x, dzi.x)
   const y = Math.max(inner.y, dzi.y)
   const right = Math.min(inner.x + inner.w, dzi.x + dzi.w)
@@ -235,8 +230,8 @@ function fragmentWithin(
 }
 
 /**
- * Plan readbacks in tileGrid order and emit each maximum-level DZI tile on
- * the first pass that completes its canonical source pixels.
+ * Traverse the shorter image dimension first to keep the pyramid frontier narrow.
+ * Emit each maximum-level DZI tile on the first pass that completes its source pixels.
  *
  * Render overlap is a seam-sampling margin. Only tileGrid.inner contributes
  * pixels; this avoids competing copies of a pixel from adjacent passes.
@@ -260,11 +255,7 @@ export function planGigapixelCapture({
       throw new RangeError(name + ' must be a positive safe integer')
     }
   }
-  if (
-    !Number.isSafeInteger(renderOverlap) ||
-    renderOverlap < 0 ||
-    2 * renderOverlap >= passEdge
-  ) {
+  if (!Number.isSafeInteger(renderOverlap) || renderOverlap < 0 || 2 * renderOverlap >= passEdge) {
     throw new RangeError('renderOverlap must leave positive pass interior')
   }
   if (!Number.isSafeInteger(width * height) || !Number.isSafeInteger(passEdge ** 2)) {
@@ -274,6 +265,7 @@ export function planGigapixelCapture({
   const pyramid = planGigapixelPyramid(width, height, tileSize, overlap)
   const dziTiles = pyramid.levels.at(-1)!
   const renderPasses = tileGrid(width, height, passEdge, renderOverlap)
+  if (width > height) renderPasses.sort((a, b) => a.col - b.col || a.row - b.row)
   const unreadPixels = dziTiles.map((tile) => tile.w * tile.h)
   const heldPixels = dziTiles.map(() => 0)
   const passes: GigapixelCapturePass[] = []

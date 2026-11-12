@@ -1,13 +1,13 @@
 import {
-  halveRgba,
-  planGigapixelCapture,
   type DeepZoomTile,
   type GigapixelCaptureFragment,
   type GigapixelCaptureOptions,
   type GigapixelCapturePass,
   type GigapixelPyramidParent,
+  halveRgba,
+  planGigapixelCapture,
 } from '@pascal-app/viewer/capture'
-import { streamDeepZoomZip, type DeepZoomZipTile } from './deep-zoom-zip'
+import { type DeepZoomZipTile, streamDeepZoomZip } from './deep-zoom-zip'
 import type { GigapixelArtifactReceipt, GigapixelArtifactSink } from './gigapixel-artifact-sink'
 
 export interface StreamGigapixelOptions extends GigapixelCaptureOptions {
@@ -30,7 +30,7 @@ export type GigapixelEncodeTile = (
 export interface StreamGigapixelStats {
   passes: number
   tilesWritten: number
-  /** Peak live RGBA pixels, including ready copies and pyramid assembly; excludes encoder/ZIP bytes. */
+  /** Peak tracked RGBA pixels; excludes encoder/ZIP bytes and garbage-collector timing. */
   peakResidentPixels: number
   planPeakResidentPixels: number
   artifact: GigapixelArtifactReceipt
@@ -39,7 +39,6 @@ export interface StreamGigapixelStats {
 interface Piece {
   fragment: GigapixelCaptureFragment
   data: Uint8ClampedArray
-  retained: boolean
 }
 
 interface ResidentTile {
@@ -64,10 +63,7 @@ function copyRect(
 ): void {
   for (let y = 0; y < height; y++) {
     const start = ((fromY + y) * sourceWidth + fromX) * 4
-    target.set(
-      source.subarray(start, start + width * 4),
-      ((toY + y) * targetWidth + toX) * 4,
-    )
+    target.set(source.subarray(start, start + width * 4), ((toY + y) * targetWidth + toX) * 4)
   }
 }
 
@@ -97,10 +93,7 @@ async function captureToSink(
     ({ parents }) => new Map([...parents].map(([id, parent]) => [id, parent.children.length])),
   )
 
-  const resident = Array.from(
-    { length: maxLevel + 1 },
-    () => new Map<string, ResidentTile>(),
-  )
+  const resident = Array.from({ length: maxLevel + 1 }, () => new Map<string, ResidentTile>())
   const incomplete = new Map<string, Piece[]>()
   let retainedPixels = 0
   let peakResidentPixels = 0
@@ -211,39 +204,34 @@ async function captureToSink(
         if (!(rgba instanceof Uint8ClampedArray) || rgba.length !== render.w * render.h * 4) {
           throw new Error('Render pass must return tightly packed RGBA pixels')
         }
-        const ready = new Set(pass.emittedTiles.map((tile) => key(tile.col, tile.row)))
+        const ready = new Map(pass.emittedTiles.map((tile) => [key(tile.col, tile.row), tile]))
         allocate(render.w * render.h)
 
         for (const fragment of pass.fragments) {
-          const pieceData = new Uint8ClampedArray(fragment.w * fragment.h * 4)
-          allocate(fragment.w * fragment.h)
-          copyRect(
-            rgba,
-            render.w,
-            fragment.x - render.x,
-            fragment.y - render.y,
-            pieceData,
-            fragment.w,
-            0,
-            0,
-            fragment.w,
-            fragment.h,
-          )
           const fragmentKey = key(fragment.col, fragment.row)
           const pieces = incomplete.get(fragmentKey) ?? []
-          const retained = !ready.has(fragmentKey)
-          pieces.push({ fragment, data: pieceData, retained })
-          incomplete.set(fragmentKey, pieces)
-          if (retained) retainedPixels += fragment.w * fragment.h
-        }
+          const tile = ready.get(fragmentKey)
+          if (!tile) {
+            const pieceData = new Uint8ClampedArray(fragment.w * fragment.h * 4)
+            allocate(fragment.w * fragment.h)
+            copyRect(
+              rgba,
+              render.w,
+              fragment.x - render.x,
+              fragment.y - render.y,
+              pieceData,
+              fragment.w,
+              0,
+              0,
+              fragment.w,
+              fragment.h,
+            )
+            pieces.push({ fragment, data: pieceData })
+            incomplete.set(fragmentKey, pieces)
+            retainedPixels += fragment.w * fragment.h
+            continue
+          }
 
-        // Drop the GPU readback before allocating completed tiles or encoding them.
-        rgba = null
-        release(render.w * render.h)
-        for (const tile of pass.emittedTiles) {
-          const tileKey = key(tile.col, tile.row)
-          const pieces = incomplete.get(tileKey)
-          if (!pieces) throw new Error('Completed DeepZoom tile has no fragments')
           const data = new Uint8ClampedArray(tile.w * tile.h * 4)
           allocate(tile.w * tile.h)
           for (const piece of pieces) {
@@ -259,13 +247,29 @@ async function captureToSink(
               piece.fragment.w,
               piece.fragment.h,
             )
-            if (piece.retained) retainedPixels -= piece.fragment.w * piece.fragment.h
+            const pixels = piece.fragment.w * piece.fragment.h
+            retainedPixels -= pixels
+            release(pixels)
           }
-          incomplete.delete(tileKey)
+          // Do not retain copied fragments through the nested pyramid emission.
+          pieces.length = 0
+          incomplete.delete(fragmentKey)
+          copyRect(
+            rgba,
+            render.w,
+            fragment.x - render.x,
+            fragment.y - render.y,
+            data,
+            tile.w,
+            fragment.x - tile.x,
+            fragment.y - tile.y,
+            fragment.w,
+            fragment.h,
+          )
           yield* emitTile(maxLevel, tile, data)
-          // The local pieces array stays referenced throughout the nested emit.
-          for (const piece of pieces) release(piece.fragment.w * piece.fragment.h)
         }
+        rgba = null
+        release(render.w * render.h)
 
         if (retainedPixels !== pass.retainedPixelsAfter) {
           throw new Error('Retained source fragments differ from the capture plan')

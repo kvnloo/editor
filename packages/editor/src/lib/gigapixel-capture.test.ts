@@ -5,7 +5,13 @@ import {
   type GigapixelArtifactSink,
 } from '@pascal-app/editor/gigapixel-artifact-sink'
 import { streamGigapixelCapture } from '@pascal-app/editor/gigapixel-capture'
-import { deepZoomDescriptor, planGigapixelCapture } from '@pascal-app/viewer/capture'
+import {
+  deepZoomDescriptor,
+  deepZoomMaxLevel,
+  deepZoomTiles,
+  halveRgba,
+  planGigapixelCapture,
+} from '@pascal-app/viewer/capture'
 import { strFromU8, unzipSync } from 'fflate'
 
 const options = {
@@ -55,8 +61,10 @@ describe('streamGigapixelCapture', () => {
 
     // Level 12: 5 x 3; level 11: 3 x 2; level 10: 2 x 1;
     // levels 0..9 each contain one tile: 15 + 6 + 2 + 10 = 33.
-    const counts = Array.from({ length: 13 }, (_, level) =>
-      Object.keys(files).filter((path) => path.startsWith('capture_files/' + level + '/')).length,
+    const counts = Array.from(
+      { length: 13 },
+      (_, level) =>
+        Object.keys(files).filter((path) => path.startsWith('capture_files/' + level + '/')).length,
     )
     expect(counts).toEqual([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 6, 15])
     expect(Object.keys(files)).toHaveLength(34)
@@ -68,19 +76,14 @@ describe('streamGigapixelCapture', () => {
     for (const x of [682, 683, 1023]) {
       const y = 200
       const at = (y * 514 + x - 511) * 4
-      expect(Array.from(seam.subarray(at, at + 4))).toEqual([
-        x % 256,
-        y % 256,
-        (x + y) % 256,
-        255,
-      ])
+      expect(Array.from(seam.subarray(at, at + 4))).toEqual([x % 256, y % 256, (x + y) % 256, 255])
     }
 
     // Pixel (200,100) at level 11 averages source (400..401,200..201).
     const half = files['capture_files/11/0_0.webp']!
-    expect(
-      Array.from(half.subarray((100 * 513 + 200) * 4, (100 * 513 + 201) * 4)),
-    ).toEqual([145, 201, 89, 255])
+    expect(Array.from(half.subarray((100 * 513 + 200) * 4, (100 * 513 + 201) * 4))).toEqual([
+      145, 201, 89, 255,
+    ])
 
     const plan = planGigapixelCapture(options)
     expect(captured.passes).toBe(6)
@@ -93,7 +96,7 @@ describe('streamGigapixelCapture', () => {
     expect(captured.planPeakResidentPixels).toBe(plan.peakResidentPixels)
   })
 
-  test('counts ready tile copies and pyramid assembly in its resident budget', async () => {
+  test('counts the live readback and pyramid assembly in its resident budget', async () => {
     const small = {
       name: 'small',
       width: 4,
@@ -106,9 +109,8 @@ describe('streamGigapixelCapture', () => {
     const plan = planGigapixelCapture(small)
     expect(plan.passes).toHaveLength(1)
     expect(plan.passes[0]!.retainedPixelsAfter).toBe(0)
-    // 16 readback + 16 ready copies = 32; after readback release:
-    // 4 ready-copy pixels + 16 completed children + 16 parent source + 4 half = 40.
-    expect(plan.peakResidentPixels).toBe(40)
+    // 16 readback + 16 completed children + 16 parent source + 4 half = 52.
+    expect(plan.peakResidentPixels).toBe(52)
 
     const sink = createInMemoryGigapixelArtifactSink()
     const actual = await streamGigapixelCapture(
@@ -119,7 +121,7 @@ describe('streamGigapixelCapture', () => {
     )
     expect(actual.passes).toBe(1)
     expect(actual.tilesWritten).toBe(6)
-    expect(actual.peakResidentPixels).toBe(40)
+    expect(actual.peakResidentPixels).toBe(52)
     expect(actual.planPeakResidentPixels).toBe(plan.peakResidentPixels)
     const entries = unzipSync(new Uint8Array(await sink.blob().arrayBuffer()))
     expect(Object.keys(entries)).toHaveLength(7)
@@ -169,6 +171,64 @@ describe('streamGigapixelCapture', () => {
     expect(Array.from(right.subarray(0, 4))).toEqual([25, 10, 0, 255])
     expect(Array.from(left.subarray(8, 12))).toEqual([45, 10, 0, 255])
     expect(Array.from(right.subarray(4, 8))).toEqual([45, 10, 0, 255])
+  })
+
+  test.each([
+    { width: 35, height: 21, tileSize: 3, overlap: 0 },
+    { width: 35, height: 21, tileSize: 4, overlap: 1 },
+    { width: 21, height: 35, tileSize: 3, overlap: 1 },
+    { width: 21, height: 35, tileSize: 4, overlap: 0 },
+  ])('preserves every pyramid pixel across both pass axes: %o', async (dimensions) => {
+    const fixture = { ...options, ...dimensions, passEdge: 12, renderOverlap: 1 }
+    const sink = createInMemoryGigapixelArtifactSink()
+    const render = (x: number, y: number, width: number, height: number) => {
+      const data = new Uint8ClampedArray(width * height * 4)
+      for (let row = 0; row < height; row++) {
+        for (let col = 0; col < width; col++) {
+          const at = (row * width + col) * 4
+          data[at] = (x + col) * 3
+          data[at + 1] = (y + row) * 5
+          data[at + 2] = x + col + y + row
+          data[at + 3] = 255
+        }
+      }
+      return data
+    }
+    const actual = await streamGigapixelCapture(
+      fixture,
+      (pass) => render(pass.x, pass.y, pass.w, pass.h),
+      (rgba) => new Uint8Array(rgba),
+      sink,
+    )
+    const entries = unzipSync(new Uint8Array(await sink.blob().arrayBuffer()))
+    let image = {
+      data: render(0, 0, fixture.width, fixture.height),
+      width: fixture.width,
+      height: fixture.height,
+    }
+    let expectedTiles = 0
+    for (let level = deepZoomMaxLevel(fixture.width, fixture.height); level >= 0; level--) {
+      for (const tile of deepZoomTiles(
+        image.width,
+        image.height,
+        fixture.tileSize,
+        fixture.overlap,
+      )) {
+        const expected = new Uint8Array(tile.w * tile.h * 4)
+        for (let row = 0; row < tile.h; row++) {
+          const start = ((tile.y + row) * image.width + tile.x) * 4
+          expected.set(image.data.subarray(start, start + tile.w * 4), row * tile.w * 4)
+        }
+        expect(
+          entries['capture_files/' + level + '/' + tile.col + '_' + tile.row + '.webp'],
+        ).toEqual(expected)
+        expectedTiles += 1
+      }
+      if (level > 0) image = halveRgba(image.data, image.width, image.height)
+    }
+    expect(Object.keys(entries)).toHaveLength(expectedTiles + 1)
+    expect(actual.tilesWritten).toBe(expectedTiles)
+    expect(actual.peakResidentPixels).toBe(actual.planPeakResidentPixels)
   })
 
   test('rejects an incorrect render readback instead of writing a partial success', async () => {
@@ -346,7 +406,6 @@ describe('streamGigapixelCapture', () => {
     expect(published).toBe(0)
   })
 
-
   test('a project switch during the final readback cannot publish into its old destination', async () => {
     let activeProject = 'project-a'
     let captureVersion = 1
@@ -416,5 +475,4 @@ describe('streamGigapixelCapture', () => {
     await expect(pending).rejects.toThrow('The capture project is no longer current')
     expect(published.size).toBe(0)
   })
-
 })
