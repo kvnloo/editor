@@ -968,7 +968,11 @@ export {
 } from './lib/terrain-sculpt'
 export { withToolShortcut } from './lib/tool-shortcuts'
 export { enterUnitFocus } from './lib/units'
-export { exportSceneToUsdz, type UsdzExportOptions } from './lib/usdz-export'
+export {
+  decodeUsdzPascalIdentity,
+  exportSceneToUsdz,
+  type UsdzExportOptions,
+} from './lib/usdz-export'
 export { useLinearDisplay } from './lib/use-linear-display'
 // `cn` (twMerge + clsx) — used by kind-owned panels in `@pascal-app/
 // nodes` so they don't need their own copy / their own tailwind-merge
