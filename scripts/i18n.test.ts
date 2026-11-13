@@ -203,6 +203,222 @@ test('rich-text validation preserves attributed and self-closing tags', () => {
   )
 })
 
+test('rich-text validation rejects HTML-like tag syntax in translations', () => {
+  for (const tag of [
+    '<img/src=x onerror=alert(1)>',
+    '<svg/onload=alert(1)>',
+    '<!-- note -->',
+  ]) {
+    expect(validateTranslation('Save', `Enregistrer ${tag}`, 'fr')).toContain(
+      'rich-text tags differ from English',
+    )
+  }
+  expect(validateTranslation('2 < 3 > 1', '2 < 4 > 1', 'fr')).toEqual([])
+})
+
+test('ICU select validation preserves branches and their nesting', () => {
+  const english = '{state, select, draft {Draft} live {Live} other {Unknown}}'
+  expect(
+    validateTranslation(
+      english,
+      '{state, select, live {En ligne} draft {Brouillon} other {Inconnu}}',
+      'fr',
+    ),
+  ).toEqual([])
+  expect(
+    validateTranslation(english, '{state, select, draft {Brouillon} other {Inconnu}}', 'fr'),
+  ).toContain('select branches or nesting differ from English')
+  expect(
+    validateTranslation(
+      english,
+      '{state, select, draft {Brouillon} live {En ligne}}',
+      'fr',
+    ),
+  ).not.toEqual([])
+
+  const nested =
+    '{count, plural, one {{state, select, draft {Draft} other {Other}}} other {Many}}'
+  expect(
+    validateTranslation(
+      nested,
+      '{count, plural, one {Un} other {{state, select, draft {Brouillon} other {Autre}}}}',
+      'en',
+    ),
+  ).toContain('select branches or nesting differ from English')
+  expect(
+    validateTranslation(
+      '{count, plural, one {One} other {Other}}',
+      '{count, plural, one {Un}}',
+      'en',
+    ),
+  ).not.toEqual([])
+})
+
+test('rich-text validation rejects crossed or unbalanced nesting', () => {
+  const source = '<b><i>Important</i></b>'
+  expect(validateTranslation(source, '<b><i>Important</b></i>', 'fr')).toContain(
+    'rich-text tag nesting differs from English',
+  )
+  expect(validateTranslation(source, '<b><i>Important</i>', 'fr')).toContain(
+    'rich-text tag nesting differs from English',
+  )
+  expect(validateTranslation(source, '<i><b>Important</b></i>', 'fr')).toEqual([])
+  expect(
+    validateTranslation('<b>Save</b> <i>file</i>', '<i>Fichier</i> <b>Enregistrer</b>', 'fr'),
+  ).toEqual([])
+  expect(
+    validateTranslation('Tap <icon name="plus" />', 'Appuyer <icon name="plus" />', 'fr'),
+  ).toEqual([])
+})
+
+test('rich-text validation checks numbered tag identity and nesting', () => {
+  const source = '<0><1>Save</1></0>'
+  expect(validateTranslation('<0>Save</0>', '<0>Enregistrer</0>', 'fr')).toEqual([])
+  expect(validateTranslation('<0>Save</0>', '<1>Enregistrer</0>', 'fr')).toContain(
+    'rich-text tags differ from English',
+  )
+  expect(validateTranslation('<0>Save</0>', '<0>Enregistrer</1>', 'fr')).toContain(
+    'rich-text tags differ from English',
+  )
+  expect(validateTranslation(source, '<0><1>Enregistrer</0></1>', 'fr')).toContain(
+    'rich-text tag nesting differs from English',
+  )
+  expect(validateTranslation(source, '<0><1>Enregistrer</1>', 'fr')).toContain(
+    'rich-text tag nesting differs from English',
+  )
+  expect(validateTranslation(source, '<1><0>Enregistrer</0></1>', 'fr')).toEqual([])
+  expect(validateTranslation('Save <0/>', 'Enregistrer <0/>', 'fr')).toEqual([])
+  expect(validateTranslation('Save <0/>', 'Enregistrer <1/>', 'fr')).toContain(
+    'rich-text tags differ from English',
+  )
+  expect(validateTranslation('2 < 3 > 1', '2 < 4 > 1', 'fr')).toEqual([])
+})
+
+test('ICU branch payloads retain their own markup and placeholders', () => {
+  const source = '{state, select, draft {<b>Draft</b> {name}} other {Other {count}}}'
+  expect(
+    validateTranslation(
+      source,
+      '{state, select, other {Autre {count}} draft {{name} <b>Brouillon</b>}}',
+      'fr',
+    ),
+  ).toEqual([])
+  expect(
+    validateTranslation(
+      source,
+      '{state, select, draft {<b>Brouillon {name}} other {Autre {count}</b>}}',
+      'fr',
+    ),
+  ).toContain('rich-text tag nesting differs from English in ICU branches')
+  expect(
+    validateTranslation(
+      source,
+      '{state, select, draft {Brouillon {name}} other {<b>Autre</b> {count}}}',
+      'fr',
+    ),
+  ).toContain('rich-text tags differ from English in ICU branches')
+  expect(
+    validateTranslation(
+      source,
+      '{state, select, draft {<b>Brouillon</b> {count}} other {Autre {name}}}',
+      'fr',
+    ),
+  ).toContain('placeholder locations differ from English in ICU branches')
+
+  const reordered =
+    '{state, select, draft {<b>Draft</b> <i>Preview</i> {name}} other {Other}}'
+  expect(
+    validateTranslation(
+      reordered,
+      '{state, select, other {Autre} draft {<i>Aperçu</i> {name} <b>Brouillon</b>}}',
+      'fr',
+    ),
+  ).toEqual([])
+  expect(
+    validateTranslation(
+      '{count, plural, one {{state, select, draft {{name}} other {Other}}} other {Many}}',
+      '{count, plural, one {{state, select, draft {Brouillon} other {{name}}}} other {Plusieurs}}',
+      'en',
+    ),
+  ).toContain('placeholder locations differ from English in ICU branches')
+  expect(
+    validateTranslation(
+      '{count, plural, one {One} other {Other}}',
+      '{count, plural, other {その他}}',
+      'ja',
+    ),
+  ).toEqual([])
+})
+
+test('ICU exact-number plural and ordinal arms retain their selectors', () => {
+  const source = '{count, plural, =0 {No {name}} one {One {name}} other {Many {name}}}'
+  const missing = '{count, plural, one {Un {name}} other {Plusieurs {name}}}'
+  const exactError = 'explicit plural choices differ from English'
+
+  expect(validateTranslation(source, missing, 'en')).toContain(exactError)
+  expect(
+    validateTranslation(
+      source,
+      '{count, plural, =1 {Aucun {name}} one {Un {name}} other {Plusieurs {name}}}',
+      'en',
+    ),
+  ).toContain(exactError)
+  expect(
+    validateTranslation(
+      '{count, plural, one {One} other {Many}}',
+      '{count, plural, =0 {Aucun} one {Un} other {Plusieurs}}',
+      'en',
+    ),
+  ).toContain(exactError)
+  expect(
+    validateTranslation(
+      source,
+      '{count, plural, other {Plusieurs {name}} =0 {Aucun {name}} one {Un {name}}}',
+      'en',
+    ),
+  ).toEqual([])
+  expect(
+    validateTranslation(source, '{count, plural, other {多数 {name}} =0 {なし {name}}}', 'ja'),
+  ).toEqual([])
+  expect(validateTranslation(source, '{count, plural, other {多数 {name}}}', 'ja')).toContain(
+    exactError,
+  )
+
+  const ordinal =
+    '{rank, selectordinal, =0 {Unranked} one {#st} two {#nd} few {#rd} other {#th}}'
+  expect(
+    validateTranslation(
+      ordinal,
+      '{rank, selectordinal, one {#st} two {#nd} few {#rd} other {#th}}',
+      'en',
+    ),
+  ).toContain(exactError)
+  expect(
+    validateTranslation(
+      ordinal,
+      '{rank, selectordinal, other {#th} few {#rd} =0 {Unranked} two {#nd} one {#st}}',
+      'en',
+    ),
+  ).toEqual([])
+
+  expect(
+    validateTranslation(
+      '{state, select, draft {{count, plural, =0 {None} other {Many}}} other {Other}}',
+      '{state, select, other {Autre} draft {{count, plural, other {Plusieurs}}}}',
+      'ja',
+    ),
+  ).toContain(exactError)
+  const omittedNamedArm =
+    '{count, plural, one {{extra, selectordinal, =0 {Zero} other {One}}} other {{extra, selectordinal, other {Many}}}}'
+  expect(
+    validateTranslation(
+      omittedNamedArm,
+      '{count, plural, other {{extra, selectordinal, other {多数}}}}',
+      'ja',
+    ),
+  ).toEqual([])
+})
+
 test('source drift fails checking, then extraction updates English and flags translations', () => {
   const root = catalogProject()
   const sample = join(root, 'packages/editor/src/sample.tsx')
