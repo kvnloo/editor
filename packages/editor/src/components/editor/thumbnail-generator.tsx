@@ -33,6 +33,7 @@ import {
   temporarilyShowShadowOnly,
   temporarilyVeilGround,
   temporarilyWithoutAmbiance,
+  tileGrid,
   useSceneAtmosphere,
   useViewer,
 } from '@pascal-app/viewer'
@@ -42,6 +43,7 @@ import { useCallback, useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { CanvasTarget, ClippingGroup, type WebGPURenderer } from 'three/webgpu'
 import { EDITOR_LAYER } from '../../lib/constants'
+import { streamGigapixelCapture } from '../../lib/gigapixel-capture'
 import {
   applySnapshotCapturePose,
   captureSnapshotScene,
@@ -102,6 +104,23 @@ export function captureDimensions(
   return [Math.round(size[0] * scale), Math.round(size[1] * scale)]
 }
 
+function requestedPictureDimensions(
+  canvasSize: readonly [number, number],
+  event: Pick<ThumbnailGenerateEvent, 'ortho' | 'perspective' | 'standardSize' | 'supersample'>,
+): [number, number] {
+  const scale = Math.max(1, event.supersample ?? 1)
+  const size =
+    (event.ortho || event.perspective) && event.standardSize && scale === 1
+      ? [event.standardSize.w, event.standardSize.h]
+      : canvasSize
+  const width = Math.round(size[0] * scale)
+  const height = Math.round(size[1] * scale)
+  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1) {
+    throw new RangeError('Requested capture dimensions must be positive safe integers')
+  }
+  return [width, height]
+}
+
 /**
  * What one capture may ask of this GPU: a pass no larger than its biggest
  * texture (and MAX_PASS_EDGE), and — on a software renderer, where a big
@@ -147,43 +166,6 @@ function captureLimits(renderer: unknown): CaptureLimits {
     ...(window as unknown as { __pascalCaptureLimits?: Partial<CaptureLimits> })
       .__pascalCaptureLimits,
   }
-}
-
-type Tile = {
-  /** The pixels the tile renders, overlap included. */
-  x: number
-  y: number
-  w: number
-  h: number
-  /** The pixels it contributes to the picture. */
-  inner: { x: number; y: number; w: number; h: number }
-}
-
-/**
- * A `width × height` picture split into equal tiles no larger than
- * `passEdge`, each rendered TILE_OVERLAP past its inner edges so the
- * screen-space passes (AO, ink, FXAA) have their neighbourhood at a seam.
- * One tile when the picture fits a pass.
- */
-export function tileGrid(width: number, height: number, passEdge: number): Tile[] {
-  const room = passEdge - 2 * TILE_OVERLAP
-  const cols = width <= passEdge ? 1 : Math.ceil(width / room)
-  const rows = height <= passEdge ? 1 : Math.ceil(height / room)
-  const tiles: Tile[] = []
-  for (let row = 0; row < rows; row++) {
-    for (let col = 0; col < cols; col++) {
-      const ix = Math.round((col * width) / cols)
-      const iy = Math.round((row * height) / rows)
-      const iw = Math.round(((col + 1) * width) / cols) - ix
-      const ih = Math.round(((row + 1) * height) / rows) - iy
-      const x = Math.max(0, ix - TILE_OVERLAP)
-      const y = Math.max(0, iy - TILE_OVERLAP)
-      const w = Math.min(width, ix + iw + TILE_OVERLAP) - x
-      const h = Math.min(height, iy + ih + TILE_OVERLAP) - y
-      tiles.push({ x, y, w, h, inner: { x: ix, y: iy, w: iw, h: ih } })
-    }
-  }
-  return tiles
 }
 
 /**
@@ -780,7 +762,13 @@ export const ThumbnailGenerator = ({ onThumbnailCapture }: ThumbnailGeneratorPro
           const canvasSize: [number, number] = [gl.domElement.width, gl.domElement.height]
           const pose = ortho ?? perspective
           const limits = captureLimits(gl)
-          const [width, height] = captureDimensions(canvasSize, event, limits.maxPixels)
+          const boundedSize = captureDimensions(canvasSize, event, limits.maxPixels)
+          const requestedSize = pose ? requestedPictureDimensions(canvasSize, event) : boundedSize
+          const gigapixel =
+            !!pose &&
+            (Math.max(...requestedSize) > MAX_CAPTURE_EDGE ||
+              requestedSize[0] * requestedSize[1] > limits.maxPixels)
+          const [width, height] = gigapixel ? requestedSize : boundedSize
           // a supersampled picture is encoded at the size it could render (the
           // caller asked for canvas × supersample, maybe past this GPU's limits)
           const encodeSize = supersample > 1 ? { w: width, h: height } : standardSize
@@ -1032,7 +1020,100 @@ export const ThumbnailGenerator = ({ onThumbnailCapture }: ThumbnailGeneratorPro
               )._nodes?.nodeFrame?.update?.()
             // a sheet's picture goes to the sheets lossless: they pick its print encoding
             const mime = pose ? 'image/png' : undefined
-            const tiles = pose && pipeline ? tileGrid(width, height, limits.passEdge) : []
+
+            if (gigapixel && pipeline) {
+              const chunks: Uint8Array[] = []
+              const stats = await streamGigapixelCapture(
+                {
+                  name: 'capture',
+                  width,
+                  height,
+                  passEdge: limits.passEdge,
+                  renderOverlap: TILE_OVERLAP,
+                  tileSize: 512,
+                  overlap: 1,
+                },
+                async (tile) => {
+                  const shot = captureSnapshotScene((restore) => {
+                    setUp(restore)
+                    thumbnailCamera.setViewOffset(width, height, tile.x, tile.y, tile.w, tile.h)
+                    restore(() => thumbnailCamera.clearViewOffset())
+                    thumbnailCamera.updateMatrixWorld()
+                    pipeline.applyEnvironment({
+                      theme: useViewer.getState().sceneAppearance,
+                      transparent,
+                      grade: useViewer.getState().shading === 'rendered',
+                      edges,
+                      camera: thumbnailCamera,
+                    })
+                    advanceNodeFrame()
+                    return atCaptureSize(gl as unknown as WebGPURenderer, tile.w, tile.h, () =>
+                      pipeline.capture({
+                        captureMode: 'standard',
+                        standardSize: { w: tile.w, h: tile.h },
+                        mime,
+                      }),
+                    )
+                  })
+                  const result = await within(
+                    Promise.resolve(shot),
+                    CAPTURE_SETTLE_MS,
+                    'The GPU readback of the captured frame never came back.',
+                  )
+                  const bitmap = await createImageBitmap(result.blob)
+                  try {
+                    const canvas = new OffscreenCanvas(tile.w, tile.h)
+                    const context = canvas.getContext('2d')
+                    if (!context) throw new Error('The render pass canvas could not be created')
+                    context.drawImage(bitmap, 0, 0)
+                    return context.getImageData(0, 0, tile.w, tile.h).data
+                  } finally {
+                    bitmap.close()
+                  }
+                },
+                async (rgba, w, h) => {
+                  const canvas = new OffscreenCanvas(w, h)
+                  const context = canvas.getContext('2d')
+                  if (!context) throw new Error('The DeepZoom tile encoder could not be created')
+                  context.putImageData(new ImageData(rgba as Uint8ClampedArray<ArrayBuffer>, w, h), 0, 0)
+                  const blob = await canvas.convertToBlob({ type: 'image/webp', quality: 0.82 })
+                  if (blob.type !== 'image/webp') {
+                    throw new Error('This browser cannot encode WebP DeepZoom tiles')
+                  }
+                  return new Uint8Array(await blob.arrayBuffer())
+                },
+                (chunk) => chunks.push(chunk.slice()),
+              )
+              const blob = new Blob(chunks, { type: 'application/zip' })
+              trace('capture:gigapixel', {
+                w: width,
+                h: height,
+                passes: stats.passes,
+                tiles: stats.tilesWritten,
+                bytes: blob.size,
+                peakResidentPixels: stats.peakResidentPixels,
+              })
+              if (captureMode !== undefined) cameraData.captureMode = captureMode
+              cameraData.resolution = { w: width, h: height }
+              if (
+                version !== captureVersion.current ||
+                perspectiveCamera !== thumbnailCameraRef.current
+              ) {
+                throw new Error('The scene changed during capture. Try again.')
+              }
+              if (cameraPose && event.projectId !== useViewer.getState().projectId) {
+                throw new Error('The active project changed during capture')
+              }
+              await within(
+                Promise.resolve(deliverSnapshot(event, blob, cameraData, onCapture)),
+                CAPTURE_SETTLE_MS,
+                'The snapshot host never took the DeepZoom archive.',
+              )
+              return
+            }
+
+            const tiles =
+              pose && pipeline ? tileGrid(width, height, limits.passEdge, TILE_OVERLAP) : []
 
             if (tiles.length > 1 && pipeline) {
               // Past one pass (the GPU's biggest texture, or MAX_PASS_EDGE) the
