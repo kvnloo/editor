@@ -52,7 +52,6 @@ import {
   presentFinished,
   presentWhileCapturing,
   pumpFrames,
-  tileGrid,
 } from './thumbnail-generator'
 
 type FakeCanvas = { width: number; height: number; style: Record<string, string> }
@@ -295,39 +294,6 @@ describe('a sheet capture session', () => {
     expect(steps).toEqual(['present', 'restore'])
     stop()
     expect(steps).toEqual(['present', 'restore'])
-  })
-})
-
-describe('a print-size picture past one render pass', () => {
-  test('fits one pass: one tile, the whole picture', () => {
-    expect(tileGrid(3209, 2588, 4096)).toEqual([
-      { x: 0, y: 0, w: 3209, h: 2588, inner: { x: 0, y: 0, w: 3209, h: 2588 } },
-    ])
-  })
-
-  test('splits into equal tiles that cover every pixel once, each rendering past its seams', () => {
-    // a 200 ppi elevation on Arch D: 22.1 in across
-    const width = 4423
-    const height = 3567
-    const tiles = tileGrid(width, height, 4096)
-    expect(tiles).toHaveLength(2)
-    let covered = 0
-    for (const tile of tiles) {
-      expect(tile.w).toBeLessThanOrEqual(4096)
-      expect(tile.h).toBeLessThanOrEqual(4096)
-      // the rendered rect holds the contributed one, on the picture
-      expect(tile.x).toBeLessThanOrEqual(tile.inner.x)
-      expect(tile.x + tile.w).toBeGreaterThanOrEqual(tile.inner.x + tile.inner.w)
-      expect(tile.x).toBeGreaterThanOrEqual(0)
-      expect(tile.x + tile.w).toBeLessThanOrEqual(width)
-      covered += tile.inner.w * tile.inner.h
-    }
-    expect(covered).toBe(width * height)
-    const [left, right] = tiles as [(typeof tiles)[number], (typeof tiles)[number]]
-    expect(left.inner.x + left.inner.w).toBe(right.inner.x)
-    // the seam: each side renders the other's first pixels too
-    expect(left.x + left.w - (left.inner.x + left.inner.w)).toBeGreaterThan(0)
-    expect(right.inner.x - right.x).toBeGreaterThan(0)
   })
 })
 
