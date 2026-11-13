@@ -1,13 +1,27 @@
 import { describe, expect, test } from 'bun:test'
-import { halveRgba } from './index'
+import { halveRgba } from '@pascal-app/viewer/capture'
 
 describe('halveRgba', () => {
+  test('rejects invalid dimensions and mismatched packed pixel bytes', () => {
+    const pixel = new Uint8ClampedArray([13, 27, 39, 51])
+    for (const size of [0, -1, 0.5, Number.NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(() => halveRgba(pixel, size, 1)).toThrow(RangeError)
+      expect(() => halveRgba(pixel, 1, size)).toThrow(RangeError)
+    }
+    expect(() => halveRgba(pixel, Number.MAX_SAFE_INTEGER, 2)).toThrow(RangeError)
+    expect(() => halveRgba(new Uint8ClampedArray(3), 1, 1)).toThrow(RangeError)
+    expect(() => halveRgba(new Uint8ClampedArray(5), 1, 1)).toThrow(RangeError)
+  })
+
+  test('reads a packed image with a nonzero byte offset', () => {
+    const storage = new Uint8ClampedArray([99, 13, 27, 39, 51, 99])
+    const { data } = halveRgba(storage.subarray(1, 5), 1, 1)
+    expect(Array.from(data)).toEqual([13, 27, 39, 51])
+  })
+
   test('averages a fully opaque 2x2 block into one pixel', () => {
     const { data, width, height } = halveRgba(
-      new Uint8ClampedArray([
-        10, 20, 30, 255, 30, 40, 50, 255,
-        50, 60, 70, 255, 70, 80, 90, 255,
-      ]),
+      new Uint8ClampedArray([10, 20, 30, 255, 30, 40, 50, 255, 50, 60, 70, 255, 70, 80, 90, 255]),
       2,
       2,
     )
@@ -20,9 +34,8 @@ describe('halveRgba', () => {
   test('averages only present pixels along odd edges', () => {
     const { data, width, height } = halveRgba(
       new Uint8ClampedArray([
-        0, 10, 20, 255, 20, 30, 40, 255, 100, 110, 120, 255,
-        40, 50, 60, 255, 60, 70, 80, 255, 120, 130, 140, 255,
-        80, 90, 100, 255, 100, 110, 120, 255, 200, 210, 220, 255,
+        0, 10, 20, 255, 20, 30, 40, 255, 100, 110, 120, 255, 40, 50, 60, 255, 60, 70, 80, 255, 120,
+        130, 140, 255, 80, 90, 100, 255, 100, 110, 120, 255, 200, 210, 220, 255,
       ]),
       3,
       3,
@@ -30,18 +43,14 @@ describe('halveRgba', () => {
 
     expect({ width, height }).toEqual({ width: 2, height: 2 })
     expect(Array.from(data)).toEqual([
-      30, 40, 50, 255, 110, 120, 130, 255,
-      90, 100, 110, 255, 200, 210, 220, 255,
+      30, 40, 50, 255, 110, 120, 130, 255, 90, 100, 110, 255, 200, 210, 220, 255,
     ])
     expect(data.length).toBe(width * height * 4)
   })
 
   test('weights RGB by alpha and rounds the mean alpha to the nearest byte', () => {
     const { data } = halveRgba(
-      new Uint8ClampedArray([
-        255, 0, 0, 255, 0, 255, 0, 0,
-        0, 0, 255, 0, 255, 255, 255, 0,
-      ]),
+      new Uint8ClampedArray([255, 0, 0, 255, 0, 255, 0, 0, 0, 0, 255, 0, 255, 255, 255, 0]),
       2,
       2,
     )
@@ -51,10 +60,7 @@ describe('halveRgba', () => {
 
   test('weights partially transparent RGB without mixing hidden colours', () => {
     const { data } = halveRgba(
-      new Uint8ClampedArray([
-        255, 0, 0, 255, 0, 0, 255, 85,
-        0, 255, 0, 0, 255, 255, 255, 0,
-      ]),
+      new Uint8ClampedArray([255, 0, 0, 255, 0, 0, 255, 85, 0, 255, 0, 0, 255, 255, 255, 0]),
       2,
       2,
     )
@@ -64,10 +70,7 @@ describe('halveRgba', () => {
 
   test('sets all channels to zero for a fully transparent block', () => {
     const { data } = halveRgba(
-      new Uint8ClampedArray([
-        255, 25, 50, 0, 10, 30, 80, 0,
-        20, 10, 255, 0, 40, 80, 120, 0,
-      ]),
+      new Uint8ClampedArray([255, 25, 50, 0, 10, 30, 80, 0, 20, 10, 255, 0, 40, 80, 120, 0]),
       2,
       2,
     )

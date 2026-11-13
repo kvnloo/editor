@@ -3,6 +3,14 @@ export function halveRgba(
   w: number,
   h: number,
 ): { data: Uint8ClampedArray; width: number; height: number } {
+  if (!Number.isSafeInteger(w) || w <= 0 || !Number.isSafeInteger(h) || h <= 0) {
+    throw new RangeError('Image dimensions must be positive safe integers')
+  }
+  const byteLength = w * h * 4
+  if (!Number.isSafeInteger(byteLength) || src.byteLength !== byteLength) {
+    throw new RangeError('Image must contain exactly width * height * 4 packed RGBA bytes')
+  }
+  const pixels = new DataView(src.buffer, src.byteOffset, src.byteLength)
   const width = Math.ceil(w / 2)
   const height = Math.ceil(h / 2)
   const data = new Uint8ClampedArray(width * height * 4)
@@ -22,11 +30,11 @@ export function halveRgba(
       for (let sy = sourceY; sy < endY; sy++) {
         for (let sx = sourceX; sx < endX; sx++) {
           const offset = (sy * w + sx) * 4
-          const alpha = src[offset + 3]
+          const alpha = pixels.getUint8(offset + 3)
           alphaSum += alpha
-          redSum += src[offset] * alpha
-          greenSum += src[offset + 1] * alpha
-          blueSum += src[offset + 2] * alpha
+          redSum += pixels.getUint8(offset) * alpha
+          greenSum += pixels.getUint8(offset + 1) * alpha
+          blueSum += pixels.getUint8(offset + 2) * alpha
         }
       }
 
