@@ -1,4 +1,4 @@
-import type { Vector3 } from 'three'
+import type { Color, Vector3 } from 'three'
 import { saturation, vec3 } from 'three/tsl'
 import type { SceneAtmosphereSource } from '../../components/viewer/scene-atmosphere'
 
@@ -10,6 +10,8 @@ export type DaylightAtmosphereSource = SceneAtmosphereSource & {
   shadow: { mapSize: number; bias: number; normalBias: number; radius: number }
   /** Sun elevation in degrees (negative at night). */
   elevation: number
+  /** Directional CPU mirror of the live sky, including its sunward glow. */
+  sampleSkyRadiance: (direction: Vector3) => Color
 }
 
 export function isDaylightAtmosphere(source: unknown): source is DaylightAtmosphereSource {

@@ -122,14 +122,16 @@ const PRESET_ELEVATION = {
 export type TimeOfDay = keyof typeof PRESET_ELEVATION
 
 /**
- * The instant on `day` (local calendar day at the site's longitude) when the sun reaches the
- * preset's elevation on the afternoon/evening side. Defined by the sun, not the clock, so no
- * timezone is needed. Falls back to the closest elevation reached (polar summer/winter).
+ * The preset on the mean-solar calendar day containing the instant `day`, on the
+ * afternoon/evening side. A Date is an instant, never a date-only or civil-day label:
+ * UTC midnight may still be the previous mean-solar day west of Greenwich.
+ * Longitude determines mean-solar time, not the site's legal time zone (even at the
+ * date line). Civil-date scheduling needs separate time-zone-aware selection.
+ * Falls back to the closest elevation reached (polar summer/winter).
  */
 export function presetInstant(day: Date, lat: number, lng: number, preset: TimeOfDay): Date {
   // Solar noon in UTC for this longitude: 12:00 local mean time.
-  const noonUtc =
-    Date.UTC(day.getFullYear(), day.getMonth(), day.getDate(), 12) - (lng / 15) * 3_600_000
+  const noonUtc = meanMidnightUtc(day, lng) + 12 * 3_600_000
   const target = PRESET_ELEVATION[preset]
   let best = noonUtc
   let bestScore = Number.POSITIVE_INFINITY
@@ -146,25 +148,28 @@ export function presetInstant(day: Date, lat: number, lng: number, preset: TimeO
 }
 
 /**
- * Times of day as minutes after local mean midnight at the site's longitude (sun time, no
- * timezone): 720 is roughly when the sun is highest, give or take the equation of time.
+ * Mean-solar clock minutes at a longitude, not a legal civil time zone: 720 is
+ * roughly the day's highest sun, give or take the equation of time.
  */
 function meanMidnightUtc(day: Date, lng: number): number {
-  return Date.UTC(day.getFullYear(), day.getMonth(), day.getDate()) - (lng / 15) * 3_600_000
+  // Select the mean-solar date containing this instant, independent of host/civil time zones.
+  const offsetMs = (lng / 15) * 3_600_000
+  const siteDay = new Date(day.getTime() + offsetMs)
+  return Date.UTC(siteDay.getUTCFullYear(), siteDay.getUTCMonth(), siteDay.getUTCDate()) - offsetMs
 }
 
-/** The instant `minutes` after local mean midnight on `day` at longitude `lng`. */
+/** The instant `minutes` into the mean-solar day containing instant `day` (not a civil date). */
 export function solarClockInstant(day: Date, lng: number, minutes: number): Date {
   return new Date(meanMidnightUtc(day, lng) + minutes * 60_000)
 }
 
-/** Minutes after local mean midnight of `date` at longitude `lng`, 0…1440. */
+/** Mean-solar minutes of instant `date` at longitude `lng`, in [0, 1440). */
 export function solarClockMinutes(date: Date, lng: number): number {
   const minutes = (date.getTime() - meanMidnightUtc(date, lng)) / 60_000
   return ((minutes % 1440) + 1440) % 1440
 }
 
-/** Sunrise and sunset on `day` (local mean minutes), or null where the sun never crosses. */
+/** Sunrise/sunset on the mean-solar date containing instant `day`, or null at polar extremes. */
 export function sunEvents(
   day: Date,
   lat: number,
