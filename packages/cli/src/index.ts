@@ -31,6 +31,7 @@ export {
   ensureWebRuntime,
   type RuntimeSource,
   readRuntimeSource,
+  uploadVerifiedRuntimeRelease,
   verifyArchiveDigest,
 } from './runtime-download.js'
 export { version } from './version.js'
