@@ -21,6 +21,7 @@ export {
   type ViewerHandle,
   type ViewerImmersiveSession,
 } from './components/viewer'
+export { DaylightAtmosphere } from './components/viewer/daylight-atmosphere'
 export {
   type BVHEcctrlApi,
   default as BVHEcctrl,
@@ -138,6 +139,8 @@ export {
   skyPhase,
   solarClockInstant,
   solarClockMinutes,
+  type SolarLight,
+  solarLight,
   solarPosition,
   sunEvents,
   type TimeOfDay,
