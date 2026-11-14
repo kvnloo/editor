@@ -1,5 +1,10 @@
 export type { AgentHostRuntime } from '../agent-operations/apply-outcome'
 export { isSettlingDocument, runSettlingDocument } from '../store/document-settling'
+export {
+  collectSceneStoreAssetReferences,
+  collectTemporalAssetReferences,
+  type TemporalAssetReferenceSource,
+} from '../store/asset-history-references'
 export type { SceneCommit, SceneCommitListener, SceneSnapshot } from '../store/history-control'
 export {
   createSceneEnvironment,
