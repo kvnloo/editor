@@ -210,9 +210,105 @@ function tags(message: string): string[] {
     }
     if (end >= message.length) continue
     const token = message.slice(start, end + 1)
-    if (/^<\s*\/?\s*[A-Za-z][\w-]*(?:\s|\/?>)/.test(token)) found.push(token)
+    if (/^<\s*[A-Za-z!/]/.test(token) || /^<\d+\s*\/?>$/.test(token)) found.push(token)
   }
-  return found.sort()
+  return found
+}
+
+function validTagNesting(message: string): boolean {
+  const open: string[] = []
+  for (const token of tags(message)) {
+    const match = /^<\s*(\/?)\s*([A-Za-z][\w:-]*|\d+)(?=[\s/>])/.exec(token)
+    if (!match) continue
+    const name = match[2]
+    if (!name) continue
+    if (match[1]) {
+      if (open.pop() !== name) return false
+    } else if (
+      !/\/\s*>$/.test(token) &&
+      !/^(?:area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)$/i.test(name)
+    ) {
+      open.push(name)
+    }
+  }
+  return open.length === 0
+}
+
+function selectStructures(tokens: CompiledToken[]): string[] {
+  const structures: string[] = []
+  const visit = (entries: CompiledToken[], path: string[]) => {
+    for (const token of entries) {
+      if (typeof token === 'string') continue
+      const type = token[1]
+      const choices = token[2]
+      if (!(choices && typeof choices === 'object')) continue
+      if (type === 'select') {
+        structures.push(JSON.stringify([path, token[0], Object.keys(choices).sort()]))
+      }
+      for (const [branch, contents] of Object.entries(choices)) {
+        if (Array.isArray(contents)) {
+          visit(contents as CompiledToken[], [...path, JSON.stringify([token[0], type, branch])])
+        }
+      }
+    }
+  }
+  visit(tokens, [])
+  return structures.sort()
+}
+
+type BranchPayload = {
+  placeholders: string[]
+  tagTokens: string[]
+  balanced: boolean
+  exactPluralChoice: boolean
+}
+
+function branchPayloads(tokens: CompiledToken[]): Map<string, BranchPayload[]> {
+  const branches = new Map<string, BranchPayload[]>()
+  const visit = (entries: CompiledToken[], path: string[]) => {
+    for (const token of entries) {
+      if (typeof token === 'string') continue
+      const type = token[1]
+      const choices = token[2]
+      if (
+        (type !== 'select' && type !== 'plural' && type !== 'selectordinal') ||
+        !choices ||
+        typeof choices !== 'object'
+      ) {
+        continue
+      }
+      for (const [branch, value] of Object.entries(choices)) {
+        if (!Array.isArray(value)) continue
+        const branchTokens = value as CompiledToken[]
+        const branchPath = [...path, JSON.stringify([token[0], type, branch])]
+        const markup = branchTokens
+          .filter((part): part is string => typeof part === 'string')
+          .join('')
+        const placeholders = new Set<string>()
+        for (const part of branchTokens) {
+          if (
+            typeof part !== 'string' &&
+            part[1] !== 'select' &&
+            part[1] !== 'plural' &&
+            part[1] !== 'selectordinal'
+          ) {
+            placeholders.add(part[0])
+          }
+        }
+        const payload: BranchPayload = {
+          placeholders: [...placeholders].sort(),
+          tagTokens: tags(markup).sort(),
+          balanced: validTagNesting(markup),
+          exactPluralChoice: type !== 'select' && /^=?-?\d+(?:\.\d+)?$/.test(branch),
+        }
+        const key = JSON.stringify(branchPath)
+        branches.set(key, [...(branches.get(key) ?? []), payload])
+        visit(branchTokens, branchPath)
+      }
+    }
+  }
+  visit(tokens, [])
+  return branches
 }
 
 function plurals(tokens: CompiledToken[]): Map<string, { type: string; categories: Set<string> }> {
@@ -300,9 +396,63 @@ export function validateTranslation(
   ) {
     errors.push('placeholder names differ from English')
   }
-  if (JSON.stringify(tags(source)) !== JSON.stringify(tags(translation))) {
+  if (JSON.stringify(tags(source).sort()) !== JSON.stringify(tags(translation).sort())) {
     errors.push('rich-text tags differ from English')
   }
+  if (validTagNesting(source) && !validTagNesting(translation)) {
+    errors.push('rich-text tag nesting differs from English')
+  }
+  if (
+    JSON.stringify(selectStructures(sourceTokens)) !==
+    JSON.stringify(selectStructures(translatedTokens))
+  ) {
+    errors.push('select branches or nesting differ from English')
+  }
+
+  const sourceBranches = branchPayloads(sourceTokens)
+  const translatedBranches = branchPayloads(translatedTokens)
+  const payloadSignature = (payloads: BranchPayload[], field: 'placeholders' | 'tagTokens') =>
+    JSON.stringify(payloads.map((payload) => JSON.stringify(payload[field])).sort())
+  const branchErrors = new Set<string>()
+  for (const [path, sourcePayloads] of sourceBranches) {
+    const translatedPayloads = translatedBranches.get(path)
+    if (!translatedPayloads) continue
+    if (
+      payloadSignature(sourcePayloads, 'placeholders') !==
+      payloadSignature(translatedPayloads, 'placeholders')
+    ) {
+      branchErrors.add('placeholder locations differ from English in ICU branches')
+    }
+    if (
+      payloadSignature(sourcePayloads, 'tagTokens') !==
+      payloadSignature(translatedPayloads, 'tagTokens')
+    ) {
+      branchErrors.add('rich-text tags differ from English in ICU branches')
+    }
+    if (
+      sourcePayloads.every((payload) => payload.balanced) &&
+      translatedPayloads.some((payload) => !payload.balanced)
+    ) {
+      branchErrors.add('rich-text tag nesting differs from English in ICU branches')
+    }
+  }
+  const requireMatchingExactChoices = (
+    from: Map<string, BranchPayload[]>,
+    to: Map<string, BranchPayload[]>,
+  ) => {
+    for (const [path, payloads] of from) {
+      if (!payloads[0]?.exactPluralChoice || to.has(path)) continue
+      const choicePath = JSON.parse(path) as string[]
+      const parentPath = choicePath.slice(0, -1)
+      // A locale may omit a named plural arm and all its nested choices.
+      if (parentPath.length === 0 || to.has(JSON.stringify(parentPath))) {
+        branchErrors.add('explicit plural choices differ from English')
+      }
+    }
+  }
+  requireMatchingExactChoices(sourceBranches, translatedBranches)
+  requireMatchingExactChoices(translatedBranches, sourceBranches)
+  errors.push(...branchErrors)
 
   const sourcePlurals = plurals(sourceTokens)
   const translatedPlurals = plurals(translatedTokens)

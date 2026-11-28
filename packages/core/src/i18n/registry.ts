@@ -103,8 +103,11 @@ function warnMissing(key: string, requestedLocale: string): void {
  * @experimental Unreleased API; signatures may change before the first i18n release.
  */
 export class PascalI18n {
+  /** Lingui-compatible facade whose translation calls use source-catalog plural rules. */
   readonly i18n: LinguiI18n
+  private readonly activeI18n: LinguiI18n
   private readonly englishI18n: LinguiI18n
+  private fallbackCatalogs: { locale: string; messages: Messages; runtime?: LinguiI18n }[] = []
   private readonly listeners = new Set<() => void>()
   private readonly localeListeners = new Set<(locale: string) => void>()
   private retentionCount = 0
@@ -113,7 +116,14 @@ export class PascalI18n {
 
   constructor(initialLocale = 'en') {
     this.locale = canonicalLocale(initialLocale)
-    this.i18n = setupI18n()
+    this.activeI18n = setupI18n()
+    const translate = this._.bind(this)
+    this.i18n = new Proxy(this.activeI18n, {
+      get: (runtime, property, receiver) =>
+        property === '_' || property === 't'
+          ? translate
+          : Reflect.get(runtime, property, receiver),
+    })
     this.englishI18n = setupI18n()
     this.refresh(false)
   }
@@ -179,8 +189,21 @@ export class PascalI18n {
   _(id: string, values?: Values, options?: MessageOptions): string
   _(idOrDescriptor: string | MessageDescriptor, values?: Values, options?: MessageOptions): string {
     const id = typeof idOrDescriptor === 'string' ? idOrDescriptor : idOrDescriptor.id
-    const translated = this.locale === 'en' || Object.hasOwn(this.i18n.messages, id)
-    const runtime = translated ? this.i18n : this.englishI18n
+    const translated = this.locale === 'en' || Object.hasOwn(this.activeI18n.messages, id)
+    let runtime = translated ? this.activeI18n : this.englishI18n
+    if (translated && !Object.hasOwn(catalogs.get(this.locale) ?? {}, id)) {
+      const inherited = this.fallbackCatalogs.find(({ messages }) => Object.hasOwn(messages, id))
+      if (inherited) {
+        if (!inherited.runtime) {
+          inherited.runtime = setupI18n()
+          inherited.runtime.loadAndActivate({
+            locale: inherited.locale,
+            messages: inherited.messages,
+          })
+        }
+        runtime = inherited.runtime
+      }
+    }
     if (!translated) warnMissing(id, this.locale)
     return typeof idOrDescriptor === 'string'
       ? runtime._(idOrDescriptor, values, options)
@@ -188,7 +211,13 @@ export class PascalI18n {
   }
 
   refresh(notify = true): void {
-    this.i18n.loadAndActivate({
+    this.fallbackCatalogs = localeFallbacks(this.locale)
+      .slice(1)
+      .flatMap((locale) => {
+        const messages = catalogs.get(locale)
+        return messages ? [{ locale, messages }] : []
+      })
+    this.activeI18n.loadAndActivate({
       locale: this.locale,
       messages: mergedMessages(this.locale),
     })
