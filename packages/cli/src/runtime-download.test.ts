@@ -3,6 +3,7 @@ import { copyFile, mkdir, mkdtemp, open, rm, stat, writeFile } from 'node:fs/pro
 import os from 'node:os'
 import path from 'node:path'
 import { isProxyBypassed, resolveProxyUrl } from './http-download.js'
+import { uploadVerifiedRuntimeRelease } from './index.js'
 import { resolvePascalPaths } from './paths.js'
 import { findInstalledRuntime, installBundledRuntime, readActiveRuntime } from './runtime.js'
 import {
@@ -11,6 +12,7 @@ import {
   type RuntimeSource,
   readRuntimeSource,
   verifyArchiveDigest,
+  verifyPublishedRuntimeRelease,
 } from './runtime-download.js'
 import { createRuntimeArchive } from './tar.js'
 
@@ -53,6 +55,36 @@ describe('archive digest verification', () => {
 })
 
 describe('published runtime source', () => {
+  test('release recovery rejects new archive bytes for an already-published CLI', async () => {
+    const fixture = await createFixture()
+    const repacked = await tamper(fixture.archiveFile, path.join(fixture.root, 'repacked.tar.gz'))
+
+    await verifyPublishedRuntimeRelease(fixture.archiveFile, fixture.sourceFile, '1.2.3')
+    await expect(
+      verifyPublishedRuntimeRelease(repacked, fixture.sourceFile, '1.2.3'),
+    ).rejects.toMatchObject({ code: 'runtime_digest_mismatch' })
+  })
+
+  test('does not upload a recovery asset before verifying its published pin', async () => {
+    const fixture = await createFixture()
+    const repacked = await tamper(
+      fixture.archiveFile,
+      path.join(fixture.root, 'repacked-upload.tar.gz'),
+    )
+    const uploaded: string[] = []
+    const upload = async () => {
+      uploaded.push('asset')
+    }
+
+    await expect(
+      uploadVerifiedRuntimeRelease(repacked, fixture.sourceFile, '1.2.3', upload),
+    ).rejects.toMatchObject({ code: 'runtime_digest_mismatch' })
+    expect(uploaded).toEqual([])
+
+    await uploadVerifiedRuntimeRelease(fixture.archiveFile, fixture.sourceFile, '1.2.3', upload)
+    expect(uploaded).toEqual(['asset'])
+  })
+
   test('reads the archive URL and digest committed with the CLI', async () => {
     const fixture = await createFixture()
 
