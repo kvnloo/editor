@@ -192,6 +192,45 @@ describe('hidden nodes', () => {
     expect(ifc).toContain("'wall_h',.STANDARD.")
     expect(ifc).not.toContain("'wall_up'")
   })
+
+  test('visible-only IFC spaces ignore hidden ceilings', () => {
+    const zone = ZoneNode.parse({
+      id: 'zone_visible',
+      parentId: 'level_r',
+      name: 'Visible room',
+      polygon: square(4),
+      ceilingHeight: 3,
+    })
+    const ceiling = CeilingNode.parse({
+      id: 'ceiling_hidden_room',
+      parentId: 'level_r',
+      zoneId: zone.id,
+      polygon: square(4),
+      height: 2,
+      visible: false,
+    })
+    const roomNodes = levelNodes(zone, ceiling)
+
+    for (const [onlyVisible, expectedHeight] of [
+      [false, 2],
+      [true, 3],
+    ] as const) {
+      const { ifc, summary } = buildIfcExport({
+        nodes: roomNodes,
+        onlyVisible,
+        timestamp: EPOCH,
+      })
+      expect(summary.elements.IFCCOVERING).toBe(onlyVisible ? undefined : 1)
+      withModel(ifc, (modelID) => {
+        const [spaceId] = idsOf(modelID, WebIFC.IFCSPACE)
+        const mesh = elementMesh(modelID, spaceId!)
+        const heights = mesh.vertices.map(([, , z]) => z!)
+        expect(Math.min(...heights)).toBeCloseTo(0, 4)
+        expect(Math.max(...heights)).toBeCloseTo(expectedHeight, 4)
+        expect(volume(mesh)).toBeCloseTo(16 * expectedHeight, 3)
+      })
+    }
+  })
 })
 
 describe('stepped wall base', () => {
