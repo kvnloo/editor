@@ -176,6 +176,12 @@ export {
 export { preserveGltfUnlit } from './lib/gltf-unlit'
 export { PERF_OVERLAY_ENABLED } from './lib/gpu-perf'
 export {
+  gpuReceipt,
+  type GpuReceipt,
+  type GpuReceiptMeta,
+  type GpuReceiptSample,
+} from './lib/gpu-receipt'
+export {
   groundWindowBoxNow,
   groundWindowContains,
   groundWindowEnabledNode,
